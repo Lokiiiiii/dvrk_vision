@@ -8,9 +8,15 @@ import rospkg
 import cv2
 # Which PyQt we use depends on our vtk version. QT4 causes segfaults with vtk > 6
 if(int(vtk.vtkVersion.GetVTKVersion()[0]) >= 6):
+<<<<<<< Updated upstream
     from PyQt5.QtWidgets import QApplication
 else:
     from PyQt4.QtGui import QApplication
+=======
+	from PyQt5.QtWidgets import QApplication
+else:
+	from PyQt4.QtGui import QApplication
+>>>>>>> Stashed changes
 
 import dvrk_vision.vtktools as vtktools
 from geometry_msgs.msg import PoseStamped
@@ -22,50 +28,45 @@ import PyKDL
 from tf_conversions import posemath
 import colorsys
 
+<<<<<<< Updated upstream
+=======
+pose = PyKDL.Frame()
+>>>>>>> Stashed changes
 
 def cleanResourcePath(path):
-    newPath = path
-    if path.find("package://") == 0:
-        newPath = newPath[len("package://"):]
-        pos = newPath.find("/")
-        if pos == -1:
-            rospy.logfatal("%s Could not parse package:// format", path)
-            quit(1)
+	newPath = path
+	if path.find("package://") == 0:
+		newPath = newPath[len("package://"):]
+		pos = newPath.find("/")
+		if pos == -1:
+			rospy.logfatal("%s Could not parse package:// format", path)
+			quit(1)
 
-        package = newPath[0:pos]
-        newPath = newPath[pos:]
-        package_path = rospkg.RosPack().get_path(package)
+		package = newPath[0:pos]
+		newPath = newPath[pos:]
+		package_path = rospkg.RosPack().get_path(package)
 
-        if package_path == "":
-            rospy.logfatal("%s Package [%s] does not exist",
-                           path.c_str(),
-                           package.c_str());
-            quit(1)
+		if package_path == "":
+			rospy.logfatal("%s Package [%s] does not exist",
+						   path.c_str(),
+						   package.c_str());
+			quit(1)
 
-        newPath = package_path + newPath;
-    elif path.find("file://") == 0:
-        newPath = newPath[len("file://"):]
+		newPath = package_path + newPath;
+	elif path.find("file://") == 0:
+		newPath = newPath[len("file://"):]
 
-    if not os.path.isfile(newPath):
-        rospy.logfatal("%s file does not exist", newPath)
-        quit(1)
-    return newPath;
+	if not os.path.isfile(newPath):
+		rospy.logfatal("%s file does not exist", newPath)
+		quit(1)
+	return newPath;
 
-def makeArrowActor(coneRadius = .1, shaftRadius = 0.03, tipLength = 0.35):
-    arrowSource = vtk.vtkArrowSource()
-    arrowSource.SetShaftRadius (shaftRadius)
-    arrowSource.SetTipRadius (coneRadius)
-    arrowSource.SetTipLength (tipLength)
-    mapper = vtk.vtkPolyDataMapper()
-    if vtk.VTK_MAJOR_VERSION <= 5:
-        mapper.SetInput(arrowSource.GetOutput())
-    else:
-        mapper.SetInputConnection(arrowSource.GetOutputPort())
-    arrowActor = vtk.vtkActor()
-    arrowActor.SetMapper(mapper)
-    return arrowActor
+def poseCb(data):
+	global pose
+	pose = posemath.fromMsg(data.pose)
 
 def setActorMatrix(actor, npMatrix):
+<<<<<<< Updated upstream
     transform = vtk.vtkTransform()
     transform.Identity()
     transform.SetMatrix(npMatrix.ravel())
@@ -186,44 +187,197 @@ class OverlayWidget(QVTKStereoViewer):
             setActorMatrix(self.arrowActor, posMat)
 
         return image
+=======
+	transform = vtk.vtkTransform()
+	origin = [1,1,1,0] + [1,1,0,0] + [0,0,1,0] + [0,0,0,1]
+	transform.SetMatrix(origin)
+	transform.Scale(1,1,1)
+	actor.SetUserTransform(transform)
+	
+def makeArrow(cameraTransform, coneRadius = .02, shaftRadius = 0.009, tipLength = .2):
+	arrowSource = vtk.vtkArrowSource()
+	arrowSource.SetShaftRadius(shaftRadius)
+	arrowSource.SetTipRadius(coneRadius)
+	arrowSource.SetTipLength(tipLength)
+	arrowSource.InvertOn()
+	
+	poseSub = rospy.Subscriber('/dvrk/PSM2/position_cartesian_current', PoseStamped, poseCb)
+	normal_rot = PyKDL.Frame(PyKDL.Rotation.RotY(np.pi/2), PyKDL.Vector(0, 0, 0))	
+	normal_pos = pose * normal_rot
+	normal_posMat = posemath.toMatrix(cameraTransform.Inverse() * normal_pos)
+	
+	mapper = vtk.vtkPolyDataMapper()
+	mapper.SetInputConnection(arrowSource.GetOutputPort())
+	arrowActor = vtk.vtkActor()
+	arrowActor.SetMapper(mapper)
+	arrowActor.GetProperty().SetOpacity(0.45)
+	arrowActor.GetProperty().SetColor(0.05,0.01,0.7)
+	setActorMatrix(arrowActor, normal_posMat)
+	return arrowActor
+>>>>>>> Stashed changes
 
 def arrayToPyKDLRotation(array):
-    x = PyKDL.Vector(array[0][0], array[1][0], array[2][0])
-    y = PyKDL.Vector(array[0][1], array[1][1], array[2][1])
-    z = PyKDL.Vector(array[0][2], array[1][2], array[2][2])
-    return PyKDL.Rotation(x,y,z)
+	x = PyKDL.Vector(array[0][0], array[1][0], array[2][0])
+	y = PyKDL.Vector(array[0][1], array[1][1], array[2][1])
+	z = PyKDL.Vector(array[0][2], array[1][2], array[2][2])
+	return PyKDL.Rotation(x,y,z)
 
 def arrayToPyKDLFrame(array):
-    rot = arrayToPyKDLRotation(array)
-    pos = PyKDL.Vector(array[0][3],array[1][3],array[2][3])
-    return PyKDL.Frame(rot,pos)
+	rot = arrayToPyKDLRotation(array)
+	pos = PyKDL.Vector(array[0][3],array[1][3],array[2][3])
+	return PyKDL.Frame(rot,pos)
+
+def findEndPoints(actor):
+	endPoints = actor.GetBounds()
+	startPoint = [endPoints[0], endPoints[2], endPoints[4]]
+	endPoint = [endPoints[1], endPoints[3], endPoints[5]]
+	return startPoint, endPoint
+
+def logit(msg):
+	fhandle = open("/home/loki/research/ws0/src/dvrk_vision/src/dvrk_vision/loki.log", "w+")
+	fhandle.write(msg)
+	fhandle.close()
+
+class meshLayer:
+	srcFile = None
+	meshData = None
+	meshActor = vtk.vtkActor()
+	meshTree = vtk.vtkOBBTree()
+	ptsOfIntersection_current = []
+	ptsOfIntersection_history = []
+	renderer = None
+	start = None
+	end = None
+	scalingFactor=1
+	
+	def setSrcFile(self, fname):
+		self.srcFile = fname	
+
+	def loadOBJ(self):
+		readerOBJ = vtk.vtkOBJReader()
+		readerOBJ.SetFileName(self.srcFile)
+		readerOBJ.Update()
+		self.meshData = readerOBJ.GetOutput()
+		if self.meshData.GetNumberOfPoints()==0:
+			raise ValueError("Point data not found")
+	
+	def scalingFilter(self):
+		transform = vtk.vtkTransform()
+		transform.Scale(self.scalingFactor, self.scalingFactor, self.scalingFactor)
+		logit("waypoints1")
+		PDfilter = vtk.vtkTransformPolyDataFilter()
+		PDfilter.SetInputData(self.meshData)
+		logit("waypoints2")
+		PDfilter.SetTransform(transform)
+		logit("waypoints3")
+		PDfilter.Update()
+		return PDfilter.GetOutput()
+	
+	def createMesh(self, scale=1):
+		self.loadOBJ()	
+		logit("waypointX")
+		mapper = vtk.vtkPolyDataMapper()
+		if scale==1:
+			mapper.SetInputData(self.meshData)
+		if scale!=1:
+			logit("waypointY")
+			self.scalingFactor=scale
+			mapper.SetInputData(vtk.vtkDataSet.SafeDownCast(self.scalingFilter()))
+		logit("waypointZ")
+		self.meshActor.SetMapper(mapper)
+		self.meshActor.GetProperty().SetOpacity(0.5)
+		self.meshActor.GetProperty().SetColor(0.75,0,0)
+
+	def getActor(self):
+		return self.meshActor
+
+	def buildTree(self):
+		self.meshTree.SetDataSet(self.meshActor.GetMapper().GetInput())
+		self.meshTree.BuildLocator()
+		
+	def getTree(self):
+		return self.meshTree
+	
+	def FindIntersection(self, start, end, rebuild=0):
+		del self.ptsOfIntersection_current[:]
+		if rebuild==1:
+			self.buildTree()
+		pts = vtk.vtkPoints()
+		success = self.meshTree.IntersectWithLine(start, end, pts, None)
+		pointsData = pts.GetData()
+		num = pointsData.GetNumberOfTuples()
+		for i in range(num):
+			temp = pointsData.GetTuple3(i)
+			self.ptsOfIntersection_current.append(temp)
+		self.ptsOfIntersection_current.append(start)
+		self.ptsOfIntersection_current.append(end)
+		self.ptsOfIntersection_history.append(self.ptsOfIntersection_current)	
+	
+	def setRenderer(self, ren):
+		self.renderer = ren
+
+	def markPoints(self, current=1):
+		if current==1:
+			for pt in self.ptsOfIntersection_current:
+				markerActor = self.createMarker(pt)
+				self.renderer.AddActor(markerActor)
+
+	def createMarker(self, point):
+		src = vtk.vtkSphereSource()
+		src.SetCenter(point)
+		src.SetRadius(0.01)
+		mapper = vtk.vtkPolyDataMapper()
+		mapper.SetInputConnection(src.GetOutputPort())
+		actor = vtk.vtkActor()
+		actor.SetMapper(mapper)
+		actor.GetProperty().SetColor(0,1,0)
+		actor.GetProperty().SetOpacity(0.55)
+		return actor
+
+	def setEndPts(self, pt1, pt2):
+		self.start = pt1
+		self.end = pt2
+	
+	def intersectAndMark(self, cb1, cb2):
+		self.FindIntersection(self.start, self.end, rebuild=1)
+		self.markPoints(current=1)
 
 if __name__ == "__main__":
-    """A simple example that uses the QVTKRenderWindowInteractor class."""
+	"""A simple example that uses the QVTKRenderWindowInteractor class."""
 
-    # every QT app needs an app
-    app = QApplication(['QVTKRenderWindowInteractor'])
-    yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
-    with open(yamlFile, 'r') as stream:
-        data = yaml.load(stream)
-    cameraTransform = arrayToPyKDLFrame(data['transform'])
+	# every QT app needs an app
+	app = QApplication(['QVTKRenderWindowInteractor'])
+	yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
+	with open(yamlFile, 'r') as stream:
+		data = yaml.load(stream)
+	cameraTransform = arrayToPyKDLFrame(data['transform'])
 
-    rosThread = vtktools.QRosThread()
-    rosThread.start()
-    frameRate = 15
-    slop = 1.0 / frameRate
-    cams = StereoCameras("stereo/left/image_rect",
-                         "stereo/right/image_rect",
-                         "stereo/left/camera_info",
-                         "stereo/right/camera_info",
-                         slop = slop)
-    # windowL = QVTKStereoViewer(cams.camL)
-    windowL = OverlayWidget(cams.camL, 'PSM2', cameraTransform)
-    windowL.Initialize()
-    windowL.start()
-    windowL.show()
-    windowR = OverlayWidget(cams.camR, 'PSM2', cameraTransform, masterWidget = windowL)
-    windowR.Initialize()
-    windowR.start()
-    windowR.show()
-    sys.exit(app.exec_())
+	renderer = vtk.vtkRenderer()
+	
+	logit("waypoint-1")
+	prostateMesh = meshLayer()
+	FilePath = "/home/loki/research/ws0/src/dvrk_vision/src/dvrk_vision/largeProstate.obj"
+	prostateMesh.setSrcFile(FilePath)
+	prostateMesh.createMesh(20)
+	logit("waypointB")
+	prostateMesh.setRenderer(renderer)
+	renderer.AddActor(prostateMesh.getActor())
+	logit("waypointA")
+	arrow = makeArrow(cameraTransform)
+	startpt, endpt = findEndPoints(arrow)
+	renderer.AddActor(arrow)
+	renderer.SetBackground(1,1,1)
+	logit("waypoint0")
+	prostateMesh.setEndPts(startpt, endpt)
+	
+	window = vtk.vtkRenderWindow()
+	window.AddRenderer(renderer)
+	interactor = vtk.vtkRenderWindowInteractor()
+	interactor.SetRenderWindow(window)
+	window.Render()
+	style = vtk.vtkInteractorStyleTrackballActor()
+	interactor.SetInteractorStyle(style)
+	logit("waypoint1")
+	interactor.AddObserver('LeftButtonPressEvent', prostateMesh.intersectAndMark)
+	interactor.Initialize()
+	interactor.Start()

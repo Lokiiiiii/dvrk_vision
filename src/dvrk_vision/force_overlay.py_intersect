@@ -1,0 +1,205 @@
+#!/usr/bin/env python
+import sys
+import os
+import vtk
+import numpy as np
+import rospy
+import rospkg
+import cv2
+# Which PyQt we use depends on our vtk version. QT4 causes segfaults with vtk > 6
+if(int(vtk.vtkVersion.GetVTKVersion()[0]) >= 6):
+	from PyQt5.QtWidgets import QApplication
+else:
+	from PyQt4.QtGui import QApplication
+
+import dvrk_vision.vtktools as vtktools
+from geometry_msgs.msg import PoseStamped
+from dvrk_vision.vtk_stereo_viewer import StereoCameras, QVTKStereoViewer
+from QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+from force_sensor_gateway.msg import ForceSensorData
+import yaml
+import PyKDL
+from tf_conversions import posemath
+import colorsys
+
+pose = PyKDL.Frame()
+
+def cleanResourcePath(path):
+	newPath = path
+	if path.find("package://") == 0:
+		newPath = newPath[len("package://"):]
+		pos = newPath.find("/")
+		if pos == -1:
+			rospy.logfatal("%s Could not parse package:// format", path)
+			quit(1)
+
+		package = newPath[0:pos]
+		newPath = newPath[pos:]
+		package_path = rospkg.RosPack().get_path(package)
+
+		if package_path == "":
+			rospy.logfatal("%s Package [%s] does not exist",
+						   path.c_str(),
+						   package.c_str());
+			quit(1)
+
+		newPath = package_path + newPath;
+	elif path.find("file://") == 0:
+		newPath = newPath[len("file://"):]
+
+	if not os.path.isfile(newPath):
+		rospy.logfatal("%s file does not exist", newPath)
+		quit(1)
+	return newPath;
+
+def loadOBJ(fname):
+	readerOBJ = vtk.vtkOBJReader()
+	readerOBJ.SetFileName(fname)
+	readerOBJ.Update()
+
+	polydata = readerOBJ.GetOutput()
+
+	if polydata.GetNumberOfPoints()==0:
+		raise ValueError("Point data not found")
+		return None
+	return polydata
+
+def createMesh(fname):
+	mesh = loadOBJ(fname)
+	#scaling = vtk.vtkTransform()
+	#scaling.Scale(25,25,25)
+	#scalingFilter = vtk.vtkTransformFilter()
+	#scalingFilter.SetInputData(mesh)
+	#scalingFilter.SetTransform(scaling)	
+
+	mapper = vtk.vtkPolyDataMapper()
+	#mapper.SetInputConnection(scalingFilter.GetOutputPort())
+	mapper.SetInputData(mesh)
+
+	actor = vtk.vtkActor()
+	actor.SetMapper(mapper)
+	#actor.GetProperty().SetOpacity(0.65)
+	actor.GetProperty().SetColor(0.75,0,0)
+	return actor,mapper.GetInput()
+
+def poseCb(data):
+	global pose
+	pose = posemath.fromMsg(data.pose)
+
+def setActorMatrix(actor, npMatrix):
+	transform = vtk.vtkTransform()
+	#transform.Identity()
+	#transform.SetMatrix(npMatrix.ravel())
+	#transform.Scale(0.1,0.1,0.1)
+	#transform.Translate(5,0,5)
+	origin = [1,1,1,0] + [1,1,0,0] + [0,0,1,0] + [0,0,0,1]
+	transform.SetMatrix(origin)
+	transform.Scale(.05,.05,.05)
+	#transform.RotateX(-np.pi/2)
+	#transform.RotateY(-np.pi/2)
+	#transform.RotateZ(-np.pi/2)
+	actor.SetUserTransform(transform)
+	
+def makeArrow(cameraTransform, coneRadius = .02, shaftRadius = 0.009, tipLength = 0.2):
+	arrowSource = vtk.vtkArrowSource()
+	arrowSource.SetShaftRadius(shaftRadius)
+	arrowSource.SetTipRadius(coneRadius)
+	arrowSource.SetTipLength(tipLength)
+	arrowSource.InvertOn()
+	
+	poseSub = rospy.Subscriber('/dvrk/PSM2/position_cartesian_current', PoseStamped, poseCb)
+	normal_rot = PyKDL.Frame(PyKDL.Rotation.RotY(np.pi/2), PyKDL.Vector(0, 0, 0))	
+	normal_pos = pose * normal_rot
+	normal_posMat = posemath.toMatrix(cameraTransform.Inverse() * normal_pos)
+	
+	mapper = vtk.vtkPolyDataMapper()
+	mapper.SetInputConnection(arrowSource.GetOutputPort())
+	arrowActor = vtk.vtkActor()
+	arrowActor.SetMapper(mapper)
+	arrowActor.GetProperty().SetOpacity(0.45)
+	arrowActor.GetProperty().SetColor(0.05,0.01,0.7)
+	setActorMatrix(arrowActor, normal_posMat)
+	return arrowActor
+
+def arrayToPyKDLRotation(array):
+	x = PyKDL.Vector(array[0][0], array[1][0], array[2][0])
+	y = PyKDL.Vector(array[0][1], array[1][1], array[2][1])
+	z = PyKDL.Vector(array[0][2], array[1][2], array[2][2])
+	return PyKDL.Rotation(x,y,z)
+
+def arrayToPyKDLFrame(array):
+	rot = arrayToPyKDLRotation(array)
+	pos = PyKDL.Vector(array[0][3],array[1][3],array[2][3])
+	return PyKDL.Frame(rot,pos)
+
+def findEndPoints(actor):
+	endPoints = actor.GetBounds()
+	startPoint = [endPoints[0], endPoints[2], endPoints[4]]
+	endPoint = [endPoints[1], endPoints[3], endPoints[5]]
+	return startPoint, endPoint
+
+def getCoords(points):
+	pointsData = points.GetData()
+	num = pointsData.GetNumberOfTuples()
+	coords=[]
+	for i in range(num):
+		temp = pointsData.GetTuple3(i)
+		coords.append(temp)
+	return coords
+
+def markPoint(point):
+	src = vtk.vtkSphereSource()
+	src.SetCenter(point)
+	src.SetRadius(0.001)
+	
+	mapper = vtk.vtkPolyDataMapper()
+	mapper.SetInputConnection(src.GetOutputPort())
+	actor = vtk.vtkActor()
+	actor.SetMapper(mapper)
+	actor.GetProperty().SetColor(0,1,0)
+	actor.GetProperty().SetOpacity(0.55)
+	return actor
+
+def logit(msg):
+	fhandle = open("/home/loki/research/ws0/src/dvrk_vision/src/dvrk_vision/loki.log", "w+")
+	fhandle.write(msg)
+	fhandle.close()
+
+if __name__ == "__main__":
+	"""A simple example that uses the QVTKRenderWindowInteractor class."""
+
+	# every QT app needs an app
+	app = QApplication(['QVTKRenderWindowInteractor'])
+	yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
+	with open(yamlFile, 'r') as stream:
+		data = yaml.load(stream)
+	cameraTransform = arrayToPyKDLFrame(data['transform'])
+
+	renderer = vtk.vtkRenderer()
+	prostateActor, mesh = createMesh("/home/loki/research/ws0/src/dvrk_vision/src/dvrk_vision/largeProstate.obj")
+	renderer.AddActor(prostateActor)
+	arrow = makeArrow(cameraTransform)
+	renderer.AddActor(arrow)
+	renderer.SetBackground(1,1,1)
+	obbTree = vtk.vtkOBBTree()
+	obbTree.SetDataSet(mesh)
+	obbTree.BuildLocator()
+	start, end = findEndPoints(arrow)	
+	intersectPoints = vtk.vtkPoints()
+	code = obbTree.IntersectWithLine(start, end, intersectPoints, None)
+	logit('code returned is {}'.format(code))
+	coordinates = getCoords(intersectPoints)
+	for pt in coordinates:
+		highlight = markPoint(pt)	
+		renderer.AddActor(highlight)
+
+	window = vtk.vtkRenderWindow()
+	window.AddRenderer(renderer)
+	interactor = vtk.vtkRenderWindowInteractor()
+	interactor.SetRenderWindow(window)
+	window.Render()
+	interactor.Start()
+	
+	rosThread = vtktools.QRosThread()
+	rosThread.start()
+	sys.exit(app.exec_())
