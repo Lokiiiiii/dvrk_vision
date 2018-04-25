@@ -9,6 +9,7 @@ import PyKDL
 from tf_conversions import posemath
 from tf import transformations
 import numpy as np
+from overlay_gui import OverlayWidget
 
 def findEndPoints(actor):
     endPoints = actor.GetBounds()
@@ -62,7 +63,8 @@ class MeshLayer:
         return self.meshActor
 
     def buildTree(self):
-        self.meshTree.SetDataSet(self.meshActor.GetMapper().GetInput())
+        #self.meshTree.SetDataSet(self.meshActor.GetMapper().GetInput())
+        self.meshTree.SetDataSet(self.meshData)
         self.meshTree.BuildLocator()
         
     def getTree(self):
@@ -82,7 +84,8 @@ class MeshLayer:
         self.ptsOfIntersection_current.append(start)
         self.ptsOfIntersection_current.append(end)
         self.ptsOfIntersection_history.append(self.ptsOfIntersection_current)   
-    
+        return self.ptsOfIntersection_current
+
     def setRenderer(self, ren):
         self.renderer = ren
 
@@ -92,10 +95,9 @@ class MeshLayer:
                 markerActor = self.createMarker(pt)
                 self.renderer.AddActor(markerActor)
 
-    def createMarker(self, point):
+    def createMarker(self):
         src = vtk.vtkSphereSource()
-        src.SetCenter(point)
-        src.SetRadius(0.01)
+        src.SetRadius(0.005)
         mapper = vtk.vtkPolyDataMapper()
         mapper.SetInputConnection(src.GetOutputPort())
         actor = vtk.vtkActor()
@@ -148,22 +150,27 @@ def makeArrow(coneRadius = .02, shaftRadius = 0.009, tipLength = .2):
     arrowActor.GetProperty().SetColor(0.05,0.01,0.7)
     return arrowActor
 
-class ForceOverlayWidget(RegistrationWidget):
+class ForceOverlayWidget(OverlayWidget):
 
-    def __init__(self, camera, meshPath, scale=1, cameraTransform=None, masterWidget=None, parent=None):
+    def __init__(self, camera, texturePath, meshPath, scale=1, cameraTransform=None, masterWidget=None, parent=None):
         if cameraTransform == None:
             cameraTransform = PyKDL.Frame.Identity()
         self.cameraTransform = cameraTransform
-        RegistrationWidget.__init__(self, camera, meshPath, scale, masterWidget, parent)
+        OverlayWidget.__init__(self, camera, texturePath, meshPath, scale, masterWidget, parent)
 
     def renderSetup(self):
-        RegistrationWidget.renderSetup(self)
+        OverlayWidget.renderSetup(self)
         self.arrowActor = makeArrow()
         # Add actor
         self.vtkWidget.ren.AddActor(self.arrowActor)
-        self.meshLayer = MeshLayer
-        RegistrationWidget.renderSetup(self)
+        self.meshLayer = MeshLayer(self.actor_moving.GetMapper().GetInput(),
+                                   scalingFactor=self.scale)
+        self.meshLayer.buildTree()
         self.poseSub = rospy.Subscriber('/dvrk/PSM2/position_cartesian_current', PoseStamped, self.robotPoseCb)
+        self.mark1=self.meshLayer.createMarker()
+        self.vtkWidget.ren.AddActor(self.mark1)
+        self.mark2=self.meshLayer.createMarker()
+        self.vtkWidget.ren.AddActor(self.mark2)
 
     def robotPoseCb(self, data):
         # self.pose = posemath.fromMsg(data.pose)
@@ -185,7 +192,24 @@ class ForceOverlayWidget(RegistrationWidget):
         transform.Identity()
         transform.SetMatrix(mat.ravel())
         self.arrowActor.SetUserTransform(transform)
-        self.arrowActor.VisibilityOn()  
+        startpt = mat[0:3,3]
+        endpt = startpt + mat[0:3,0] * 10
+        self.mark1.SetPosition(startpt)
+        self.mark2.SetPosition(endpt)
+        self.arrowActor.VisibilityOn() 
+        organTransform = self.actor_moving.GetUserTransform()
+        # Transform into organ frame
+        if organTransform==None:
+            return
+        endpt = organTransform.GetInverse().TransformPoint(endpt)
+        startpt = organTransform.GetInverse().TransformPoint(startpt)
+        intersection = self.meshLayer.FindIntersection(startpt, endpt)
+        if len(intersection) == 0:
+            return
+        # Transform back into camera frame
+        marker = organTransform.TransformPoint(intersection[0])
+        self.mark2.SetPosition(marker)
+        
 
     def setCameraTransform(self, matrix):
         self.cameraTransform = matrix
@@ -241,6 +265,7 @@ if __name__ == "__main__":
     # every QT app needs an app
     import yaml
     yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
+    texturePath = "package://oct_15_demo/resources/largeProstate.png"
     with open(yamlFile, 'r') as stream:
         data = yaml.load(stream)
     cameraTransform = arrayToPyKDLFrame(data['transform'])
@@ -257,7 +282,7 @@ if __name__ == "__main__":
                          "/stereo/left/camera_info",
                          "/stereo/right/camera_info",
                          slop = slop)
-    windowL = ForceOverlayWidget(cams.camL, meshPath, scale=stlScale, cameraTransform=cameraTransform)
+    windowL = ForceOverlayWidget(cams.camL, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform)
     windowL.show()
     # windowR = RegistrationWidget(cams.camR, meshPath, scale=stlScale, masterWidget=windowL)
     # windowR.show()

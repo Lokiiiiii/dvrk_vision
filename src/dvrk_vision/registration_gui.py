@@ -86,13 +86,13 @@ class RegistrationWidget(QWidget):
         self.vtkFrame.setLayout(self.vl)
 
         # Set up subscriber for registered organ position
-        poseSubTopic = "registration_marker"
+        poseSubTopic = "/stereo/registration_marker"
         poseSub = rospy.Subscriber(poseSubTopic, Marker, self.poseCallback)
 
         # Set up registration button
-        pubTopic = "registration_reset"
+        pubTopic = "/stereo/registration_reset"
         self.resetPub = rospy.Publisher(pubTopic, Bool, queue_size=1)
-        pubTopic = "registration_toggle"
+        pubTopic = "/stereo/registration_toggle"
         self.active = False
         self.activePub = rospy.Publisher(pubTopic, Bool, queue_size=1)
         self.registerButton.clicked.connect(self.register)
