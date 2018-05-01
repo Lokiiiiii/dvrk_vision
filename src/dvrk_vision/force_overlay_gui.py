@@ -19,24 +19,14 @@ def findEndPoints(actor):
 
 class MeshLayer:
     def __init__(self, polyData, scalingFactor = 1):
-        # self.srcFile = srcFile
-        # self.scalingFactor = scalingFactor
+        self.scalingFactor = scalingFactor
         self.meshData = polyData
         self.meshActor = vtk.vtkActor()
         self.meshTree = vtk.vtkOBBTree()
         self.ptsOfIntersection_current = []
         self.ptsOfIntersection_history = []
-        self.renderer = None
         self.start = None
         self.end = None  
-
-    def loadOBJ(self):
-        readerOBJ = vtk.vtkOBJReader()
-        readerOBJ.SetFileName(self.srcFile)
-        readerOBJ.Update()
-        self.meshData = readerOBJ.GetOutput()
-        if self.meshData.GetNumberOfPoints() == 0:
-            raise ValueError("Point data not found")
     
     def scalingFilter(self):
         transform = vtk.vtkTransform()
@@ -46,29 +36,11 @@ class MeshLayer:
         PDfilter.SetTransform(transform)
         PDfilter.Update()
         return PDfilter.GetOutput()
-    
-    def createMesh(self, scale=1):
-        self.loadOBJ()  
-        mapper = vtk.vtkPolyDataMapper()
-        if scale==1:
-            mapper.SetInputData(self.meshData)
-        if scale!=1:
-            self.scalingFactor=scale
-            mapper.SetInputData(vtk.vtkDataSet.SafeDownCast(self.scalingFilter()))
-        self.meshActor.SetMapper(mapper)
-        self.meshActor.GetProperty().SetOpacity(0.5)
-        self.meshActor.GetProperty().SetColor(0.75,0,0)
-
-    def getActor(self):
-        return self.meshActor
 
     def buildTree(self):
-        #self.meshTree.SetDataSet(self.meshActor.GetMapper().GetInput())
-        self.meshTree.SetDataSet(self.meshData)
+        #Scale model and build OBB tree
+        self.meshTree.SetDataSet(self.scalingFilter())
         self.meshTree.BuildLocator()
-        
-    def getTree(self):
-        return self.meshTree
     
     def FindIntersection(self, start, end, rebuild=0):
         del self.ptsOfIntersection_current[:]
@@ -86,15 +58,6 @@ class MeshLayer:
         self.ptsOfIntersection_history.append(self.ptsOfIntersection_current)   
         return self.ptsOfIntersection_current
 
-    def setRenderer(self, ren):
-        self.renderer = ren
-
-    def markPoints(self, current=1):
-        if current==1:
-            for pt in self.ptsOfIntersection_current:
-                markerActor = self.createMarker(pt)
-                self.renderer.AddActor(markerActor)
-
     def createMarker(self):
         src = vtk.vtkSphereSource()
         src.SetRadius(0.005)
@@ -106,13 +69,6 @@ class MeshLayer:
         actor.GetProperty().SetOpacity(0.55)
         return actor
 
-    def setEndPts(self, pt1, pt2):
-        self.start = pt1
-        self.end = pt2
-    
-    def intersectAndMark(self, cb1, cb2):
-        self.FindIntersection(self.start, self.end, rebuild=1)
-        self.markPoints(current=1)
 
 def arrayToPyKDLRotation(array):
     x = PyKDL.Vector(array[0][0], array[1][0], array[2][0])
@@ -125,9 +81,6 @@ def arrayToPyKDLFrame(array):
     pos = PyKDL.Vector(array[0][3],array[1][3],array[2][3])
     return PyKDL.Frame(rot,pos)
 
-def pyKDLFrameToArray(frame):
-    frame.M
-
 def setActorMatrix(actor, npMatrix):
     transform = vtk.vtkTransform()
     origin = [1,1,1,0] + [1,1,0,0] + [0,0,1,0] + [0,0,0,1]
@@ -135,13 +88,12 @@ def setActorMatrix(actor, npMatrix):
     transform.Scale(100,100,100)
     actor.SetUserTransform(transform)
 
-def makeArrow(coneRadius = .02, shaftRadius = 0.009, tipLength = .2):
+def makeArrow(coneRadius = .01, shaftRadius = 0.005, tipLength = .05):
     arrowSource = vtk.vtkArrowSource()
     arrowSource.SetShaftRadius(shaftRadius)
     arrowSource.SetTipRadius(coneRadius)
     arrowSource.SetTipLength(tipLength)
     # arrowSource.InvertOn()
-    
     mapper = vtk.vtkPolyDataMapper()
     mapper.SetInputConnection(arrowSource.GetOutputPort())
     arrowActor = vtk.vtkActor()
@@ -161,60 +113,60 @@ class ForceOverlayWidget(OverlayWidget):
     def renderSetup(self):
         OverlayWidget.renderSetup(self)
         self.arrowActor = makeArrow()
-        # Add actor
         self.vtkWidget.ren.AddActor(self.arrowActor)
         self.meshLayer = MeshLayer(self.actor_moving.GetMapper().GetInput(),
                                    scalingFactor=self.scale)
         self.meshLayer.buildTree()
         self.poseSub = rospy.Subscriber('/dvrk/PSM2/position_cartesian_current', PoseStamped, self.robotPoseCb)
-        self.mark1=self.meshLayer.createMarker()
-        self.vtkWidget.ren.AddActor(self.mark1)
-        self.mark2=self.meshLayer.createMarker()
-        self.vtkWidget.ren.AddActor(self.mark2)
+        
+        #Markers to debug Start point and end Point of tool tip extension
+        self.DebugActorStartPoint=self.meshLayer.createMarker()
+        self.vtkWidget.ren.AddActor(self.DebugActorStartPoint)
+        self.DebugActorEndPoint=self.meshLayer.createMarker()
+        self.vtkWidget.ren.AddActor(self.DebugActorEndPoint)
+
+    def debugActors(self, debug):
+        if debug==0:
+            self.DebugActorStartPoint.VisibilityOff()
+            self.DebugActorEndPoint.VisibilityOff()
+        if debug==1:
+            self.DebugActorStartPoint.VisibilityOn()
+            self.DebugActorEndPoint.VisibilityOn()
 
     def robotPoseCb(self, data):
-        # self.pose = posemath.fromMsg(data.pose)
-        # normal_rot = PyKDL.Frame(PyKDL.Rotation.RotY(np.pi/2), PyKDL.Vector(0, 0, 0))   
-        # normal_pos = self.pose * normal_rot
-        # normal_posMat = posemath.toMatrix(self.cameraMatrix.Inverse() * normal_pos)
-        # print(normal_posMat)
-        # setActorMatrix(self.arrowActor, normal_posMat)
-        pos = data.pose.position
-        rot = data.pose.orientation
-        mat = transformations.quaternion_matrix([rot.x,rot.y,rot.z,rot.w])
-        mat[0:3,3] = [pos.x,pos.y,pos.z]
+        toolPosition = data.pose.position
+        toolRotation = data.pose.orientation
+        mat = transformations.quaternion_matrix([toolRotation.x,toolRotation.y,toolRotation.z,toolRotation.w])
+        mat[0:3,3] = [toolPosition.x,toolPosition.y,toolPosition.z]
         pose = posemath.fromMatrix(mat)
-        normal_rot = PyKDL.Frame(PyKDL.Rotation.RotY(-np.pi/2), PyKDL.Vector(0, 0, 0))   
-        pose = pose * normal_rot
+        normalRotation = PyKDL.Frame(PyKDL.Rotation.RotY(-np.pi/2), PyKDL.Vector(0, 0, 0))   
+        pose = pose * normalRotation
         mat = posemath.toMatrix(cameraTransform.Inverse() * pose)
         mat[0:3,0:3] *= .1
-        transform = vtk.vtkTransform()
-        transform.Identity()
-        transform.SetMatrix(mat.ravel())
-        self.arrowActor.SetUserTransform(transform)
-        startpt = mat[0:3,3]
-        endpt = startpt + mat[0:3,0] * 10
-        self.mark1.SetPosition(startpt)
-        self.mark2.SetPosition(endpt)
-        self.arrowActor.VisibilityOn() 
-        organTransform = self.actor_moving.GetUserTransform()
+        startPoint = mat[0:3,3]
+        endPoint = startPoint + mat[0:3,0] * 10
+        self.DebugActorStartPoint.SetPosition(startPoint)
+        self.DebugActorEndPoint.SetPosition(endPoint)
         # Transform into organ frame
+        organTransform = self.actor_moving.GetUserTransform()
         if organTransform==None:
+            print('Error: Organ transform not available')
             return
-        endpt = organTransform.GetInverse().TransformPoint(endpt)
-        startpt = organTransform.GetInverse().TransformPoint(startpt)
-        intersection = self.meshLayer.FindIntersection(startpt, endpt)
-        if len(intersection) == 0:
+        endPoint = organTransform.GetInverse().TransformPoint(endPoint)
+        startPoint = organTransform.GetInverse().TransformPoint(startPoint)
+        intersection = self.meshLayer.FindIntersection(startPoint, endPoint)
+        if len(intersection)==0:
+            print('No point of intersection found')
             return
         # Transform back into camera frame
-        marker = organTransform.TransformPoint(intersection[0])
-        self.mark2.SetPosition(marker)
-        
-
-    def setCameraTransform(self, matrix):
-        self.cameraTransform = matrix
-
-
+        intersectPoint = organTransform.TransformPoint(intersection[0])
+        self.DebugActorEndPoint.SetPosition(intersectPoint)
+        mat[0:3,0] = intersectPoint-startPoint
+        arrowTransform = vtk.vtkTransform()
+        arrowTransform.Identity()
+        arrowTransform.SetMatrix(mat.ravel())
+        self.arrowActor.SetUserTransform(arrowTransform)
+        self.debugActors(0)
 
 if __name__ == "__main__":
     # Which PyQt we use depends on our vtk version. QT4 causes segfaults with vtk > 6
@@ -226,43 +178,7 @@ if __name__ == "__main__":
         from PyQt4.QtGui import QWidget, QVBoxLayout, QApplication
         from PyQt4 import uic
         _QT_VERSION = 4
-    # """A simple example that uses the QVTKRenderWindowInteractor class."""
-    # import yaml
-    # import PyKDL
-    # from geometry_msgs.msg import PoseStamped
-    # from tf_conversions import posemath
-    # # every QT app needs an app
-    # app = QApplication(['QVTKRenderWindowInteractor'])
-    # yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
-    # with open(yamlFile, 'r') as stream:
-    #     data = yaml.load(stream)
-    # cameraTransform = arrayToPyKDLFrame(data['transform'])
 
-    # renderer = vtk.vtkRenderer()
-    
-    # prostateMesh = meshLayer()
-    # FilePath = "largeProstate.obj"
-    # prostateMesh.setSrcFile(FilePath)
-    # prostateMesh.createMesh(20)
-    # prostateMesh.setRenderer(renderer)
-    # renderer.AddActor(prostateMesh.getActor())
-    # arrow = makeArrow(cameraTransform)
-    # startpt, endpt = findEndPoints(arrow)
-    # renderer.AddActor(arrow)
-    # renderer.SetBackground(1,1,1)
-    # prostateMesh.setEndPts(startpt, endpt)
-    
-    # window = vtk.vtkRenderWindow()
-    # window.AddRenderer(renderer)
-    # interactor = vtk.vtkRenderWindowInteractor()
-    # interactor.SetRenderWindow(window)
-    # window.Render()
-    # style = vtk.vtkInteractorStyleTrackballActor()
-    # interactor.SetInteractorStyle(style)
-    # interactor.AddObserver('LeftButtonPressEvent', prostateMesh.intersectAndMark)
-    # interactor.Initialize()
-    # interactor.Start()
-    # every QT app needs an app
     import yaml
     yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
     texturePath = "package://oct_15_demo/resources/largeProstate.png"
