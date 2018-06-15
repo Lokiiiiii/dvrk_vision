@@ -1,15 +1,15 @@
-from registration_gui import RegistrationWidget, cleanResourcePath
+from registration_gui import cleanResourcePath
 from geometry_msgs.msg import PoseStamped
 import vtk
 import sys
-from vtk_stereo_viewer import StereoCameras, QVTKStereoViewer
-import vtktools
+from dvrk_vision.vtk_stereo_viewer import StereoCameras
+import dvrk_vision.vtktools as vtktools
 import rospy
 import PyKDL
 from tf_conversions import posemath
 from tf import transformations
 import numpy as np
-from overlay_gui import OverlayWidget
+from dvrk_vision.overlay_gui import OverlayWidget
 
 def findEndPoints(actor):
     endPoints = actor.GetBounds()
@@ -60,7 +60,7 @@ class MeshLayer:
 
     def createMarker(self):
         src = vtk.vtkSphereSource()
-        src.SetRadius(0.005)
+        src.SetRadius(0.002)
         mapper = vtk.vtkPolyDataMapper()
         mapper.SetInputConnection(src.GetOutputPort())
         actor = vtk.vtkActor()
@@ -98,7 +98,7 @@ def makeArrow(coneRadius = .01, shaftRadius = 0.005, tipLength = .05):
     mapper.SetInputConnection(arrowSource.GetOutputPort())
     arrowActor = vtk.vtkActor()
     arrowActor.SetMapper(mapper)
-    arrowActor.GetProperty().SetOpacity(0.45)
+    arrowActor.GetProperty().SetOpacity(1)
     arrowActor.GetProperty().SetColor(0.05,0.01,0.7)
     return arrowActor
 
@@ -112,7 +112,7 @@ class ForceOverlayWidget(OverlayWidget):
 
     def renderSetup(self):
         OverlayWidget.renderSetup(self)
-        self.arrowActor = makeArrow()
+        self.arrowActor = makeArrow(tipLength=.15)
         self.vtkWidget.ren.AddActor(self.arrowActor)
         self.meshLayer = MeshLayer(self.actor_moving.GetMapper().GetInput(),
                                    scalingFactor=self.scale)
@@ -132,6 +132,10 @@ class ForceOverlayWidget(OverlayWidget):
         if debug==1:
             self.DebugActorStartPoint.VisibilityOn()
             self.DebugActorEndPoint.VisibilityOn()
+        if debug==2:
+            self.DebugActorStartPoint.VisibilityOff()
+            self.DebugActorEndPoint.VisibilityOn()
+            self.arrowActor.VisibilityOff()
 
     def robotPoseCb(self, data):
         toolPosition = data.pose.position
@@ -142,31 +146,34 @@ class ForceOverlayWidget(OverlayWidget):
         normalRotation = PyKDL.Frame(PyKDL.Rotation.RotY(-np.pi/2), PyKDL.Vector(0, 0, 0))   
         pose = pose * normalRotation
         mat = posemath.toMatrix(cameraTransform.Inverse() * pose)
-        mat[0:3,0:3] *= .1
+        # mat[0:3,0:3] *= .1
         startPoint = mat[0:3,3]
-        endPoint = startPoint + mat[0:3,0] * 10
+        endPoint = startPoint + mat[0:3,0]
         self.DebugActorStartPoint.SetPosition(startPoint)
         self.DebugActorEndPoint.SetPosition(endPoint)
         # Transform into organ frame
-        organTransform = self.actor_moving.GetUserTransform()
+        organTransform = self.actor_moving.GetMatrix()
+        organTransform.Invert()
         if organTransform==None:
             print('Error: Organ transform not available')
             return
-        endPoint = organTransform.GetInverse().TransformPoint(endPoint)
-        startPoint = organTransform.GetInverse().TransformPoint(startPoint)
+        endPoint = organTransform.MultiplyPoint(np.append(endPoint,1))[0:3]
+        startPoint = organTransform.MultiplyPoint(np.append(startPoint,1))[0:3]
         intersection = self.meshLayer.FindIntersection(startPoint, endPoint)
         if len(intersection)==0:
             print('No point of intersection found')
             return
         # Transform back into camera frame
-        intersectPoint = organTransform.TransformPoint(intersection[0])
+        organTransform.Invert()
+        intersectPoint = organTransform.MultiplyPoint(np.append(intersection[0],1))[0:3]
         self.DebugActorEndPoint.SetPosition(intersectPoint)
-        mat[0:3,0] = intersectPoint-startPoint
+        mat[0:3,0] *= np.linalg.norm(np.subtract(mat[0:3,3], intersectPoint))
+        mat[0:3,1:3] *= 0.2
         arrowTransform = vtk.vtkTransform()
         arrowTransform.Identity()
         arrowTransform.SetMatrix(mat.ravel())
         self.arrowActor.SetUserTransform(arrowTransform)
-        self.debugActors(0)
+        self.debugActors(1)
 
 if __name__ == "__main__":
     # Which PyQt we use depends on our vtk version. QT4 causes segfaults with vtk > 6
@@ -200,7 +207,7 @@ if __name__ == "__main__":
                          slop = slop)
     windowL = ForceOverlayWidget(cams.camL, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform)
     windowL.show()
-    # windowR = RegistrationWidget(cams.camR, meshPath, scale=stlScale, masterWidget=windowL)
-    # windowR.show()
+    windowR = ForceOverlayWidget(cams.camR, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform,  masterWidget=windowL)
+    windowR.show()
     rosThread.start()
     sys.exit(app.exec_())
