@@ -17,38 +17,17 @@ from vtk_stereo_viewer import StereoCameras, QVTKStereoViewer
 import vtktools
 # Which PyQt we use depends on our vtk version. QT4 causes segfaults with vtk > 6
 if(int(vtk.vtkVersion.GetVTKVersion()[0]) >= 6):
-    from PyQt5.QtWidgets import QWidget, QVBoxLayout, QApplication
+    from PyQt5.QtWidgets import QWidget, QHBoxLayout, QLabel, QApplication
+    from PyQt5.QtCore import Qt
     from PyQt5 import uic
     _QT_VERSION = 5
 else:
-    from PyQt4.QtGui import QWidget, QVBoxLayout, QApplication
+    from PyQt4.QtGui import QWidget, QHBoxLayout, QLabel, QApplication
+    from PyQt4.QtCore import Qt
     from PyQt4 import uic
     _QT_VERSION = 4
 
-def cleanResourcePath(path):
-    newPath = path
-    if path.find("package://") == 0:
-        newPath = newPath[len("package://"):]
-        pos = newPath.find("/")
-        if pos == -1:
-            rospy.logfatal("%s Could not parse package:// format", path)
-
-        package = newPath[0:pos]
-        newPath = newPath[pos:]
-        package_path = rospkg.RosPack().get_path(package)
-
-        if package_path == "":
-            rospy.logfatal("%s Package [%s] does not exist",
-                           path.c_str(),
-                           package.c_str());
-
-        newPath = package_path + newPath;
-    elif path.find("file://") == 0:
-        newPath = newPath[len("file://"):]
-
-    if not os.path.isfile(newPath):
-        rospy.logfatal("%s file does not exist", newPath)
-    return newPath;
+from clean_resource_path import cleanResourcePath
 
 class RegistrationWidget(QWidget):
     bridge = CvBridge()
@@ -65,7 +44,7 @@ class RegistrationWidget(QWidget):
         self.isPrimaryWindow = masterWidget == None
         side = "left" if self.isPrimaryWindow else "right"
 
-        self.vtkWidget = QVTKStereoViewer(camera, parent=self)
+        self.vtkWidget = QVTKStereoViewer(camera, alignment=side, parent=self)
 
         self.vtkWidget.renderSetup = self.renderSetup
 
@@ -81,9 +60,9 @@ class RegistrationWidget(QWidget):
             self.segmentation = masterWidget.segmentation
 
         # Add vtk widget
-        self.vl = QVBoxLayout()
-        self.vl.addWidget(self.vtkWidget)
-        self.vtkFrame.setLayout(self.vl)
+        hl = QHBoxLayout()
+        hl.addWidget(self.vtkWidget)
+        self.vtkFrame.setLayout(hl)
 
         # Set up subscriber for registered organ position
         poseSubTopic = "/stereo/registration_marker"
@@ -219,10 +198,13 @@ class RegistrationWidget(QWidget):
         mat = transformations.quaternion_matrix([rot.x,rot.y,rot.z,rot.w])
         mat[0:3,3] = [pos.x,pos.y,pos.z]
         transform = vtk.vtkTransform()
-        transform.Identity()
         transform.SetMatrix(mat.ravel())
-        self.actor_moving.SetUserTransform(transform)
-        self.actor_moving.VisibilityOn()             
+        self.actor_moving.SetPosition(transform.GetPosition())
+        self.actor_moving.SetOrientation(transform.GetOrientation())
+        self.actor_moving.VisibilityOn()
+        if self.isVisible():
+            self.vtkWidget.ren.ResetCameraClippingRange()
+        # self.vtkWidget.GetRenderWindow().Render()
 
     def _updateActorPolydata(self,actor,polydata,color):
         # Modifies an actor with new polydata
@@ -259,9 +241,14 @@ if __name__ == "__main__":
                          "/stereo/left/camera_info",
                          "/stereo/right/camera_info",
                          slop = slop)
+    screenres = QApplication.desktop().screenGeometry(1);
+    wL = QWidget();
+    wR = QWidget();
     windowL = RegistrationWidget(cams.camL, meshPath, scale=stlScale)
-    windowL.show()
+    wL.show()
+    windowL.resize(screenres.width(), screenres.height())
+    windowL.showFullScreen()
     windowR = RegistrationWidget(cams.camR, meshPath, scale=stlScale, masterWidget=windowL)
-    windowR.show()
+    wR.show()
     rosThread.start()
     sys.exit(app.exec_())

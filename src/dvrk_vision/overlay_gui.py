@@ -21,6 +21,7 @@ from visualization_msgs.msg import Marker
 from cv_bridge import CvBridge, CvBridgeError
 from tf import transformations
 from dvrk_vision.vtk_stereo_viewer import StereoCameras, QVTKStereoViewer
+from dvrk_vision.clean_resource_path import cleanResourcePath
 
 class vtkRosTextureActor(vtk.vtkActor):
     ''' Attaches texture to the actor. Texture is received by subscribing to a ROS topic and then converted to vtk image
@@ -68,39 +69,14 @@ class vtkRosTextureActor(vtk.vtkActor):
             self.GetProperty().SetColor(self.color)
             self.GetProperty().LightingOn()
 
-def cleanResourcePath(path):
-    newPath = path
-    if path.find("package://") == 0:
-        newPath = newPath[len("package://"):]
-        pos = newPath.find("/")
-        if pos == -1:
-            rospy.logfatal("%s Could not parse package:// format", path)
-            quit(1)
 
-        package = newPath[0:pos]
-        newPath = newPath[pos:]
-        package_path = rospkg.RosPack().get_path(package)
-
-        if package_path == "":
-            rospy.logfatal("%s Package [%s] does not exist",
-                           path.c_str(),
-                           package.c_str());
-            quit(1)
-
-        newPath = package_path + newPath;
-    elif path.find("file://") == 0:
-        newPath = newPath[len("file://"):]
-
-    if not os.path.isfile(newPath):
-        rospy.logfatal("%s file does not exist", newPath)
-        quit(1)
-    return newPath;
-
+#Here lies definition of cleanResourcePath which was removed during the merge
 class OverlayWidget(QWidget):
     bridge = CvBridge()
     def __init__(self, camera, texturePath, meshPath, scale=1, masterWidget=None, parent=None):
         super(OverlayWidget, self).__init__()
-        uiPath = cleanResourcePath("package://oct_15_demo/scripts/overlay_widget.ui")
+        #uiPath = cleanResourcePath("package://oct_15_demo/scripts/overlay_widget.ui")
+        uiPath = cleanResourcePath("package://dvrk_vision/src/dvrk_vision/overlay_widget.ui")
         # Get CV image from path
         uic.loadUi(uiPath, self)
 
@@ -150,7 +126,7 @@ class OverlayWidget(QWidget):
                                   polydata=transformFilter.GetOutput(),
                                   color = color)
         # Set texture to default
-        image = cv2.imread(cleanResourcePath(self.texturePath))
+        self.image = cv2.imread(cleanResourcePath(self.texturePath))
         self.actor_moving.setTexture(image)
         self.actor_moving.textureOnOff(True)
 
@@ -168,6 +144,7 @@ class OverlayWidget(QWidget):
 
         # Set up subscriber for registered organ position
         poseSubTopic = "/stereo/registration_marker"
+        #poseSubTopic = "registration_marker"
         self.poseSub = rospy.Subscriber(poseSubTopic, Marker, self.poseCallback)
 
         # Set up QT slider for opacity
@@ -190,10 +167,14 @@ class OverlayWidget(QWidget):
         mat = transformations.quaternion_matrix([rot.x,rot.y,rot.z,rot.w])
         mat[0:3,3] = [pos.x,pos.y,pos.z]
         transform = vtk.vtkTransform()
-        transform.Identity()
+        #transform.Identity()
         transform.SetMatrix(mat.ravel())
-        self.actor_moving.SetUserTransform(transform)
-        self.actor_moving.VisibilityOn()             
+        self.actor_moving.SetPosition(transform.GetPosition())
+        self.actor_moving.SetOrientation(transform.GetOrientation())
+        if self.isVisible():
+            self.vtkWidget.ren.ResetCameraClippingRange()
+        # self.vtkWidget.GetRenderWindow().Render()
+        self.actor_moving.VisibilityOn()  
 
     def _updateActorPolydata(self,actor,polydata,color=None):
         # Modifies an actor with new polydata
@@ -231,3 +212,4 @@ if __name__ == "__main__":
     windowL.show()
     # windowR = OverlayWidget(cams.camR, meshPath, scale=stlScale, masterWidget=windowL)
     sys.exit(app.exec_())
+

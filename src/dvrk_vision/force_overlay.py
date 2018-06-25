@@ -1,37 +1,28 @@
 #!/usr/bin/env python
-import sys
-import os
 import vtk
 import numpy as np
 import rospy
-import rospkg
 import cv2
 # Which PyQt we use depends on our vtk version. QT4 causes segfaults with vtk > 6
 if(int(vtk.vtkVersion.GetVTKVersion()[0]) >= 6):
-<<<<<<< Updated upstream
-    from PyQt5.QtWidgets import QApplication
+    from PyQt5.QtWidgets import QWidget, QVBoxLayout, QApplication
+    _QT_VERSION = 5
 else:
-    from PyQt4.QtGui import QApplication
-=======
-	from PyQt5.QtWidgets import QApplication
-else:
-	from PyQt4.QtGui import QApplication
->>>>>>> Stashed changes
-
-import dvrk_vision.vtktools as vtktools
-from geometry_msgs.msg import PoseStamped
-from dvrk_vision.vtk_stereo_viewer import StereoCameras, QVTKStereoViewer
+    from PyQt4.QtGui import QWidget, QVBoxLayout, QApplication
+    _QT_VERSION = 4
 from QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+import dvrk_vision.vtktools as vtktools
 from force_sensor_gateway.msg import ForceSensorData
-import yaml
+from geometry_msgs.msg import WrenchStamped
+from dvrk_vision.vtk_stereo_viewer import StereoCameras, QVTKStereoViewer
+from dvrk_vision.clean_resource_path import cleanResourcePath
+from dvrk import psm
 import PyKDL
 from tf_conversions import posemath
 import colorsys
 
-<<<<<<< Updated upstream
-=======
-pose = PyKDL.Frame()
->>>>>>> Stashed changes
+
+#pose = PyKDL.Frame()
 
 def cleanResourcePath(path):
 	newPath = path
@@ -65,16 +56,31 @@ def poseCb(data):
 	global pose
 	pose = posemath.fromMsg(data.pose)
 
+def makeArrowActor(coneRadius = .1, shaftRadius = 0.03, tipLength = 0.35):
+    arrowSource = vtk.vtkArrowSource()
+    arrowSource.SetShaftRadius (shaftRadius)
+    arrowSource.SetTipRadius (coneRadius)
+    arrowSource.SetTipLength (tipLength)
+    mapper = vtk.vtkPolyDataMapper()
+    if vtk.VTK_MAJOR_VERSION <= 5:
+        mapper.SetInput(arrowSource.GetOutput())
+    else:
+        mapper.SetInputConnection(arrowSource.GetOutputPort())
+    arrowActor = vtk.vtkActor()
+    arrowActor.SetMapper(mapper)
+    return arrowActor
+
 def setActorMatrix(actor, npMatrix):
-<<<<<<< Updated upstream
     transform = vtk.vtkTransform()
     transform.Identity()
     transform.SetMatrix(npMatrix.ravel())
-    actor.SetUserTransform(transform)
+    actor.SetPosition(transform.GetPosition())
+    actor.SetOrientation(transform.GetOrientation())
+    actor.SetScale(transform.GetScale())
 
-class OverlayWidget(QVTKStereoViewer):
-    def __init__(self, camera, dvrkName, cameraTransform, masterWidget=None, parent=None):
-        super(OverlayWidget, self).__init__(camera, parent=parent)
+class ForceOverlayWidget(QVTKStereoViewer):
+    def __init__(self, cam, camTransform, dvrkName, forceTopic, draw="bar", masterWidget=None, parent=None):
+        super(ForceOverlayWidget, self).__init__(cam, parent=parent)
         self.masterWidget = masterWidget
         self.cameraTransform = cameraTransform
         self.drawType = "arrow"
@@ -99,6 +105,13 @@ class OverlayWidget(QVTKStereoViewer):
 
     def poseCb(self, data):
         self.pose = posemath.fromMsg(data.pose)
+        if self.masterWidget == None:
+            self.robot = psm(dvrkName)
+        else:
+            self.robot = self.masterWidget.robot
+        self.cameraTransform = camTransform
+        self.drawType = draw
+        rospy.Subscriber(forceTopic, WrenchStamped, self.forceCB)
 
     def renderSetup(self):
         if self.drawType == "arrow":
@@ -155,16 +168,17 @@ class OverlayWidget(QVTKStereoViewer):
         self.iren.RemoveObservers('MouseMoveEvent')
         self.iren.RemoveObservers('MiddleButtonPressEvent')
         self.iren.RemoveObservers('MiddleButtonPressEvent')
+        self.currentForce
     
+    def forceCB(self, data):
+        self.currentForce = [data.wrench.force.x, data.wrench.force.y, data.wrench.force.z]
+
     def imageProc(self,image):
-        if type(self.force) != type(None):
-            # Get current force
-            force = self.force # self.robot.get_current_wrench_body()[0:3]
-        else :
-            force = [0,0,0,0];
+        # Get current force
+        force = self.currentForce
         force = np.linalg.norm(force)
-        targetF = .5 # Target force
-        targetR = .5 # Force Range
+        targetF = 4 # Newtons
+        targetR = 1 # Newtons
         # Calculate color
         xp = [targetF-targetR, targetF, targetF+targetR]
         fp = [0, 1, 0]
@@ -187,34 +201,25 @@ class OverlayWidget(QVTKStereoViewer):
             setActorMatrix(self.arrowActor, posMat)
 
         return image
-=======
-	transform = vtk.vtkTransform()
-	origin = [1,1,1,0] + [1,1,0,0] + [0,0,1,0] + [0,0,0,1]
-	transform.SetMatrix(origin)
-	transform.Scale(1,1,1)
-	actor.SetUserTransform(transform)
-	
-def makeArrow(cameraTransform, coneRadius = .02, shaftRadius = 0.009, tipLength = .2):
-	arrowSource = vtk.vtkArrowSource()
-	arrowSource.SetShaftRadius(shaftRadius)
-	arrowSource.SetTipRadius(coneRadius)
-	arrowSource.SetTipLength(tipLength)
-	arrowSource.InvertOn()
-	
-	poseSub = rospy.Subscriber('/dvrk/PSM2/position_cartesian_current', PoseStamped, poseCb)
-	normal_rot = PyKDL.Frame(PyKDL.Rotation.RotY(np.pi/2), PyKDL.Vector(0, 0, 0))	
-	normal_pos = pose * normal_rot
-	normal_posMat = posemath.toMatrix(cameraTransform.Inverse() * normal_pos)
-	
-	mapper = vtk.vtkPolyDataMapper()
-	mapper.SetInputConnection(arrowSource.GetOutputPort())
-	arrowActor = vtk.vtkActor()
-	arrowActor.SetMapper(mapper)
-	arrowActor.GetProperty().SetOpacity(0.45)
-	arrowActor.GetProperty().SetColor(0.05,0.01,0.7)
-	setActorMatrix(arrowActor, normal_posMat)
-	return arrowActor
->>>>>>> Stashed changes
+        elif self.drawType == "bar":
+            self.forceBar.GetProperty().SetColor(color[0], color[1], color[2])
+            # Move background bar
+            pos = self.robot.get_current_position()
+            pos = self.cameraTransform.Inverse() * pos
+            pos2 = PyKDL.Frame(PyKDL.Rotation.Identity(), pos.p)
+            pos2.M.DoRotZ(np.pi)
+            pos2.p = pos2.p + pos2.M.UnitX() * -.015
+            posMat = posemath.toMatrix(pos2)
+            setActorMatrix(self.bar, posMat)
+            setActorMatrix(self.greenLine, posMat)
+            # Scale color bar
+            fp2 = [0, .5, 1]
+            scalePos = np.interp(force, xp, fp2)
+            print scalePos
+            posMat[1,0:3] = posMat[1,0:3] * scalePos
+            setActorMatrix(self.forceBar, posMat)
+
+        return image
 
 def arrayToPyKDLRotation(array):
 	x = PyKDL.Vector(array[0][0], array[1][0], array[2][0])
@@ -343,31 +348,50 @@ class meshLayer:
 		self.markPoints(current=1)
 
 if __name__ == "__main__":
-	"""A simple example that uses the QVTKRenderWindowInteractor class."""
+    import sys
+    import yaml
+    import dvrk_vision.vtktools as vtktools
+    """A simple example that uses the ForceOverlayWidget class."""
 
-	# every QT app needs an app
-	app = QApplication(['QVTKRenderWindowInteractor'])
-	yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
-	with open(yamlFile, 'r') as stream:
-		data = yaml.load(stream)
-	cameraTransform = arrayToPyKDLFrame(data['transform'])
+    # every QT app needs an app
+	#app = QApplication(['QVTKRenderWindowInteractor'])
+    app = QApplication(['Force Overlay'])
+    yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
+    with open(yamlFile, 'r') as stream:
+        data = yaml.load(stream)
+    cameraTransform = arrayToPyKDLFrame(data['transform'])
 
+    rosThread = vtktools.QRosThread()
+    rosThread.start()
+    frameRate = 15
+    slop = 1.0 / frameRate
+    cams = StereoCameras("stereo/left/image_rect",
+                         "stereo/right/image_rect",
+                         "stereo/left/camera_info",
+                         "stereo/right/camera_info",
+                         slop = slop)
+
+    windowL = ForceOverlayWidget(cam = cams.camL,
+                                 camTransform = cameraTransform,
+                                 dvrkName = 'PSM2',
+                                 forceTopic = '/atinetft/wrench')
+    windowL.Initialize()
+    windowL.start()
+    windowL.show()
+    sys.exit(app.exec_())
+//Merge from Loki
+/*
 	renderer = vtk.vtkRenderer()
-	
-	logit("waypoint-1")
 	prostateMesh = meshLayer()
 	FilePath = "/home/loki/research/ws0/src/dvrk_vision/src/dvrk_vision/largeProstate.obj"
 	prostateMesh.setSrcFile(FilePath)
 	prostateMesh.createMesh(20)
-	logit("waypointB")
 	prostateMesh.setRenderer(renderer)
 	renderer.AddActor(prostateMesh.getActor())
-	logit("waypointA")
 	arrow = makeArrow(cameraTransform)
 	startpt, endpt = findEndPoints(arrow)
 	renderer.AddActor(arrow)
 	renderer.SetBackground(1,1,1)
-	logit("waypoint0")
 	prostateMesh.setEndPts(startpt, endpt)
 	
 	window = vtk.vtkRenderWindow()
@@ -381,3 +405,4 @@ if __name__ == "__main__":
 	interactor.AddObserver('LeftButtonPressEvent', prostateMesh.intersectAndMark)
 	interactor.Initialize()
 	interactor.Start()
+*/

@@ -10,6 +10,8 @@ from tf_conversions import posemath
 from tf import transformations
 import numpy as np
 from dvrk_vision.overlay_gui import OverlayWidget
+import cv2
+from uv_to_world import UVToWorldConverter
 
 def findEndPoints(actor):
     endPoints = actor.GetBounds()
@@ -117,6 +119,7 @@ class ForceOverlayWidget(OverlayWidget):
         self.meshLayer = MeshLayer(self.actor_moving.GetMapper().GetInput(),
                                    scalingFactor=self.scale)
         self.meshLayer.buildTree()
+        self.uvConverter = UVToWorldConverter(self.MeshLayer.scalingFilter())
         self.poseSub = rospy.Subscriber('/dvrk/PSM2/position_cartesian_current', PoseStamped, self.robotPoseCb)
         
         #Markers to debug Start point and end Point of tool tip extension
@@ -124,6 +127,13 @@ class ForceOverlayWidget(OverlayWidget):
         self.vtkWidget.ren.AddActor(self.DebugActorStartPoint)
         self.DebugActorEndPoint=self.meshLayer.createMarker()
         self.vtkWidget.ren.AddActor(self.DebugActorEndPoint)
+        self.textSource = vtk.vtkVectorText()
+        textMapper = vtk.vtkPolyDatamapper()
+        textMapper.SetInputConnection(textSource.GetOutputPort())
+        self.textActor = vtk.vtkActor()
+        self.textActor.SetMapper(textMapper)
+        self.vtkWidget.ren.AddActor(self.textActor)
+
 
     def debugActors(self, debug):
         if debug==0:
@@ -174,6 +184,19 @@ class ForceOverlayWidget(OverlayWidget):
         arrowTransform.SetMatrix(mat.ravel())
         self.arrowActor.SetUserTransform(arrowTransform)
         self.debugActors(1)
+        #cv2.imshow("Sandbox",self.image)
+        uvPoint = self.uvConverter.toUVSpace(intersectPoint)
+        color = self.image[uvPoint[0]][uvPoint[1]]
+        print(color)
+        self.textSource.SetText(string(color))
+        self.textActor.GetProperty.SetColor(color)
+        textTransform = vtk.vtkTransform()
+        textTransform.Identity()
+        textTransform.Translate([toolPosition.x,toolPosition.y,toolPosition.z])
+        textTransform.Scale(1,1,1)
+        self.textActor.SetUserTransform(textTransform)
+        self.textActor.Update()
+
 
 if __name__ == "__main__":
     # Which PyQt we use depends on our vtk version. QT4 causes segfaults with vtk > 6
@@ -188,7 +211,8 @@ if __name__ == "__main__":
 
     import yaml
     yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
-    texturePath = "package://oct_15_demo/resources/largeProstate.png"
+    #texturePath = "package://oct_15_demo/resources/largeProstate.png"
+    texturePath = "largeProstate.png"
     with open(yamlFile, 'r') as stream:
         data = yaml.load(stream)
     cameraTransform = arrayToPyKDLFrame(data['transform'])
@@ -206,8 +230,12 @@ if __name__ == "__main__":
                          "/stereo/right/camera_info",
                          slop = slop)
     windowL = ForceOverlayWidget(cams.camL, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform)
+    #windowL.Initialize()
+    #windowL.start()
     windowL.show()
     windowR = ForceOverlayWidget(cams.camR, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform,  masterWidget=windowL)
+    #windowR.Initialize()
+    #windowR.start()
     windowR.show()
     rosThread.start()
     sys.exit(app.exec_())

@@ -17,6 +17,9 @@ def npMatrixToVtkMatrix(matrix):
             retMat.SetElement(r,c,matrix[r,c])
     return retMat
 
+def vtkMatrixtoNpMatrix(matrix):
+    return np.array(matrix.GetData(), (4,4))
+
 # Sets up a three channel empty vtkImageData object
 def makeVtkImage(imgDims):
     ''' Creates a blank vtkImageData object of specified dimensions
@@ -95,8 +98,6 @@ def setupRenWinForRegistration(renWin,bgImage,camIntrinsic):
             bgImage (vtkImageData): image to put in the background
                                     that will be updated with video
                                     footage and masking feedback
-            actor (vtkActor): Actor that functions as mapper for the
-                              STL file we are registering.
             camIntrinsic (np.ndarray): 4x4 camera intrinsic matrix from
                                        OpenCV calibration
     '''
