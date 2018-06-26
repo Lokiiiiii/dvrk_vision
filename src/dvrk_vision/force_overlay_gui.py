@@ -12,6 +12,7 @@ import numpy as np
 from dvrk_vision.overlay_gui import OverlayWidget
 import cv2
 from uv_to_world import UVToWorldConverter
+import copy
 
 def findEndPoints(actor):
     endPoints = actor.GetBounds()
@@ -133,6 +134,14 @@ class ForceOverlayWidget(OverlayWidget):
         self.textActor = vtk.vtkActor()
         self.textActor.SetMapper(textMapper)
         self.vtkWidget.ren.AddActor(self.textActor)
+        self.intensityMap = copy.deepcopy(self.image)
+        for row in self.intensityMap:
+            for pixel in row:
+                intensity = (pixel[0]+pixel[1]+pixel[2])/float(255*3)
+                pixel=[]
+                pixel = intensity
+        self.annotatedTexture = copy.deepcopy(self.image)
+
 
 
     def debugActors(self, debug):
@@ -187,6 +196,9 @@ class ForceOverlayWidget(OverlayWidget):
         #cv2.imshow("Sandbox",self.image)
         uvPoint = self.uvConverter.toUVSpace(intersectPoint)
         color = self.image[uvPoint[0]][uvPoint[1]]
+#start event
+        self.annotatedTexture[uvPoint[0]][uvPoint[1]]=[255,255,255]
+#end event        
         print(color)
         self.textSource.SetText(string(color))
         self.textActor.GetProperty.SetColor(color)

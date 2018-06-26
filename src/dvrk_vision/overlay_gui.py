@@ -51,7 +51,7 @@ class vtkRosTextureActor(vtk.vtkActor):
             self.setTexture(cv2_img)
 
     def setTexture(self, img):
-        if type(self.vtkImage) == type(None):
+        if type(self.vtkImage) == type(None):   
             self.vtkImage = vtktools.makeVtkImage(img.shape)
         vtktools.numpyToVtkImage(img, self.vtkImage)
         if vtk.VTK_MAJOR_VERSION <= 5:
