@@ -10,6 +10,8 @@ from tf_conversions import posemath
 from tf import transformations
 import numpy as np
 from dvrk_vision.overlay_gui import OverlayWidget
+import cv2
+from uvtoworld import UVToWorldConverter
 
 def findEndPoints(actor):
     endPoints = actor.GetBounds()
@@ -125,6 +127,21 @@ class ForceOverlayWidget(OverlayWidget):
         self.DebugActorEndPoint=self.meshLayer.createMarker()
         self.vtkWidget.ren.AddActor(self.DebugActorEndPoint)
 
+        self.textSource = vtk.vtkVectorText()
+        textMapper = vtk.vtkPolyDataMapper()
+        textMapper.SetInputConnection(self.textSource.GetOutputPort())
+        self.textActor = vtk.vtkActor()
+        self.textActor.SetMapper(textMapper)
+        self.vtkWidget.ren.AddActor(self.textActor)
+        self.intensityMap = np.copy(self.image)
+        for row in self.intensityMap:
+            for pixel in row:
+                intensity = (pixel[0]+pixel[1]+pixel[2])/float(255*3)
+                pixel=[]
+                pixel = intensity
+        self.annotatedTexture = np.copy(self.image)
+
+
     def debugActors(self, debug):
         if debug==0:
             self.DebugActorStartPoint.VisibilityOff()
@@ -174,6 +191,19 @@ class ForceOverlayWidget(OverlayWidget):
         arrowTransform.SetMatrix(mat.ravel())
         self.arrowActor.SetUserTransform(arrowTransform)
         self.debugActors(1)
+        uvPoint = self.uvConverter.toUVSpace(intersectPoint)
+        color = self.image[uvPoint[0]][uvPoint[1]]
+#start event
+        self.annotatedTexture[uvPoint[0]][uvPoint[1]]=[255,255,255]
+#end event        
+        self.textSource.SetText(string(color))
+        self.textActor.GetProperty.SetColor(color)
+        textTransform = vtk.vtkTransform()
+        textTransform.Identity()
+        textTransform.Translate([toolPosition.x,toolPosition.y,toolPosition.z])
+        textTransform.Scale(1,1,1)
+        self.textActor.SetUserTransform(textTransform)
+        self.textActor.Update()
 
 if __name__ == "__main__":
     # Which PyQt we use depends on our vtk version. QT4 causes segfaults with vtk > 6
