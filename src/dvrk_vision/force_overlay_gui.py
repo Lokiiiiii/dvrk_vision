@@ -198,7 +198,13 @@ class ForceOverlayWidget(OverlayWidget):
         color = self.image[uvPoint[0]][uvPoint[1]]
 #start event
         self.annotatedTexture[uvPoint[0]][uvPoint[1]]=[255,255,255]
+        self.actor_moving.textureOnOff(False)
+        self.actor_moving.setTexture(self.annotatedTexture)
+        self.actor_moving.textureOnOff(True)
 #end event        
+        self.actor_moving.textureOnOff(False)
+        self.actor_moving.setTexture(self.image)
+        self.actor_moving.textureOnOff(True)
         print(color)
         self.textSource.SetText(string(color))
         self.textActor.GetProperty.SetColor(color)
