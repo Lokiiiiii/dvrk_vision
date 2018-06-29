@@ -98,6 +98,7 @@ class OverlayWidget(QWidget):
         
         self.vtkWidget.Initialize()
         self.vtkWidget.start()
+        print("LOKI")
 
     def renderSetup(self):
         if type(self.masterWidget) != type(None):
@@ -127,8 +128,8 @@ class OverlayWidget(QWidget):
                                       polydata=transformFilter.GetOutput(),
                                       color = color)
             # Set texture to default
-            image = cv2.imread(cleanResourcePath(self.texturePath))
-            self.actor_moving.setTexture(image)
+            self.image = cv2.imread(cleanResourcePath(self.texturePath))
+            self.actor_moving.setTexture(self.image)
             self.actor_moving.textureOnOff(True)
 
         # Hide actor

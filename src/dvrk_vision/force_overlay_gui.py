@@ -119,6 +119,7 @@ class ForceOverlayWidget(OverlayWidget):
         self.meshLayer = MeshLayer(self.actor_moving.GetMapper().GetInput(),
                                    scalingFactor=self.scale)
         self.meshLayer.buildTree()
+        self.uvConverter = UVToWorldConverter(self.meshLayer.scalingFilter())
         self.poseSub = rospy.Subscriber('/dvrk/PSM2/position_cartesian_current', PoseStamped, self.robotPoseCb)
         
         #Markers to debug Start point and end Point of tool tip extension
@@ -133,14 +134,8 @@ class ForceOverlayWidget(OverlayWidget):
         self.textActor = vtk.vtkActor()
         self.textActor.SetMapper(textMapper)
         self.vtkWidget.ren.AddActor(self.textActor)
-        self.intensityMap = np.copy(self.image)
-        for row in self.intensityMap:
-            for pixel in row:
-                intensity = (pixel[0]+pixel[1]+pixel[2])/float(255*3)
-                pixel=[]
-                pixel = intensity
+        self.intensityMap = [[(pixel[0]+pixel[1]+pixel[2])/float(255*3) for pixel in line]for line in self.image]
         self.annotatedTexture = np.copy(self.image)
-
 
     def debugActors(self, debug):
         if debug==0:
@@ -195,7 +190,14 @@ class ForceOverlayWidget(OverlayWidget):
         color = self.image[uvPoint[0]][uvPoint[1]]
 #start event
         self.annotatedTexture[uvPoint[0]][uvPoint[1]]=[255,255,255]
+        self.actor_moving.textureOnOff(False)
+        self.actor_moving.setTexture(self.annotatedTexture)
+        self.actor_moving.textureOnOff(True)
 #end event        
+
+        self.actor_moving.textureOnOff(False)
+        self.actor_moving.setTexture(self.image)
+        self.actor_moving.textureOnOff(True)
         self.textSource.SetText(string(color))
         self.textActor.GetProperty.SetColor(color)
         textTransform = vtk.vtkTransform()
