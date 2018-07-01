@@ -9,7 +9,7 @@ import PyKDL
 from tf_conversions import posemath
 from tf import transformations
 import numpy as np
-from dvrk_vision.overlay_gui import OverlayWidget
+from overlay_gui import OverlayWidget
 import cv2
 from uvtoworld import UVToWorldConverter
 
@@ -60,17 +60,16 @@ class MeshLayer:
         self.ptsOfIntersection_history.append(self.ptsOfIntersection_current)   
         return self.ptsOfIntersection_current
 
-    def createMarker(self):
-        src = vtk.vtkSphereSource()
-        src.SetRadius(0.002)
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(src.GetOutputPort())
-        actor = vtk.vtkActor()
-        actor.SetMapper(mapper)
-        actor.GetProperty().SetColor(0,1,0)
-        actor.GetProperty().SetOpacity(0.55)
-        return actor
-
+def createMarker(radius=0.0015, color=(0,1,0)):
+    src = vtk.vtkSphereSource()
+    src.SetRadius(radius)
+    mapper = vtk.vtkPolyDataMapper()
+    mapper.SetInputConnection(src.GetOutputPort())
+    actor = vtk.vtkActor()
+    actor.SetMapper(mapper)
+    actor.GetProperty().SetColor(color)
+    actor.GetProperty().SetOpacity(0.55)
+    return actor
 
 def arrayToPyKDLRotation(array):
     x = PyKDL.Vector(array[0][0], array[1][0], array[2][0])
@@ -105,37 +104,42 @@ def makeArrow(coneRadius = .01, shaftRadius = 0.005, tipLength = .05):
     return arrowActor
 
 class ForceOverlayWidget(OverlayWidget):
-
     def __init__(self, camera, texturePath, meshPath, scale=1, cameraTransform=None, masterWidget=None, parent=None):
+        super(ForceOverlayWidget, self).__init__(camera, texturePath, meshPath, scale, masterWidget, parent)
         if cameraTransform == None:
             cameraTransform = PyKDL.Frame.Identity()
         self.cameraTransform = cameraTransform
-        OverlayWidget.__init__(self, camera, texturePath, meshPath, scale, masterWidget, parent)
 
     def renderSetup(self):
-        OverlayWidget.renderSetup(self)
+        super(ForceOverlayWidget, self).renderSetup()
         self.arrowActor = makeArrow(tipLength=.15)
         self.vtkWidget.ren.AddActor(self.arrowActor)
-        self.meshLayer = MeshLayer(self.actor_moving.GetMapper().GetInput(),
-                                   scalingFactor=self.scale)
+        self.meshLayer = MeshLayer(self.actor_moving.GetMapper().GetInput(), scalingFactor=self.scale)
         self.meshLayer.buildTree()
-        self.uvConverter = UVToWorldConverter(self.meshLayer.scalingFilter())
+        self.uvConverter = UVToWorldConverter(self.actor_moving.GetMapper().GetInput())
         self.poseSub = rospy.Subscriber('/dvrk/PSM2/position_cartesian_current', PoseStamped, self.robotPoseCb)
-        
         #Markers to debug Start point and end Point of tool tip extension
-        self.DebugActorStartPoint=self.meshLayer.createMarker()
+        self.DebugActorStartPoint=createMarker(color=(0,0,1))
         self.vtkWidget.ren.AddActor(self.DebugActorStartPoint)
-        self.DebugActorEndPoint=self.meshLayer.createMarker()
+        self.DebugActorEndPoint=createMarker(color=(0,0,1))
         self.vtkWidget.ren.AddActor(self.DebugActorEndPoint)
+        self.SurfaceTracker=createMarker(color=(0,1,0))
+        self.vtkWidget.ren.AddActor(self.SurfaceTracker)
 
         self.textSource = vtk.vtkVectorText()
+        self.textSource.SetText("??")
+        self.textSource.Update()
         textMapper = vtk.vtkPolyDataMapper()
         textMapper.SetInputConnection(self.textSource.GetOutputPort())
-        self.textActor = vtk.vtkActor()
+        self.textActor = vtk.vtkFollower()
         self.textActor.SetMapper(textMapper)
+        self.textActor.SetScale(1)
         self.vtkWidget.ren.AddActor(self.textActor)
-        self.intensityMap = [[(pixel[0]+pixel[1]+pixel[2])/float(255*3) for pixel in line]for line in self.image]
+        self.intensityMap = self.image[:,:,0] + self.image[:,:,1] + self.image[:,:,2]
+        self.intensityMap = self.intensityMap.astype(np.float)/(255*3)
         self.annotatedTexture = np.copy(self.image)
+#        cv2.imshow("Intensity Map", cv2.resize(self.intensityMap, (500,500)))
+#        cv2.imshow("Annotated Texture", cv2.resize(self.annotatedTexture, (500,500)))
 
     def debugActors(self, debug):
         if debug==0:
@@ -148,7 +152,7 @@ class ForceOverlayWidget(OverlayWidget):
             self.DebugActorStartPoint.VisibilityOff()
             self.DebugActorEndPoint.VisibilityOn()
             self.arrowActor.VisibilityOff()
-
+    
     def robotPoseCb(self, data):
         toolPosition = data.pose.position
         toolRotation = data.pose.orientation
@@ -163,6 +167,7 @@ class ForceOverlayWidget(OverlayWidget):
         endPoint = startPoint + mat[0:3,0]
         self.DebugActorStartPoint.SetPosition(startPoint)
         self.DebugActorEndPoint.SetPosition(endPoint)
+
         # Transform into organ frame
         organTransform = self.actor_moving.GetMatrix()
         organTransform.Invert()
@@ -178,7 +183,7 @@ class ForceOverlayWidget(OverlayWidget):
         # Transform back into camera frame
         organTransform.Invert()
         intersectPoint = organTransform.MultiplyPoint(np.append(intersection[0],1))[0:3]
-        self.DebugActorEndPoint.SetPosition(intersectPoint)
+        self.SurfaceTracker.SetPosition(intersectPoint)
         mat[0:3,0] *= np.linalg.norm(np.subtract(mat[0:3,3], intersectPoint))
         mat[0:3,1:3] *= 0.2
         arrowTransform = vtk.vtkTransform()
@@ -186,41 +191,39 @@ class ForceOverlayWidget(OverlayWidget):
         arrowTransform.SetMatrix(mat.ravel())
         self.arrowActor.SetUserTransform(arrowTransform)
         self.debugActors(1)
-        uvPoint = self.uvConverter.toUVSpace(intersectPoint)
-        color = self.image[uvPoint[0]][uvPoint[1]]
-#start event
-        self.annotatedTexture[uvPoint[0]][uvPoint[1]]=[255,255,255]
-        self.actor_moving.textureOnOff(False)
-        self.actor_moving.setTexture(self.annotatedTexture)
-        self.actor_moving.textureOnOff(True)
-#end event        
+#        uvPoint = self.uvConverter.toUVSpace(intersectPoint)
+#        color = self.image[uvPoint[0]][uvPoint[1]]
 
-        self.actor_moving.textureOnOff(False)
-        self.actor_moving.setTexture(self.image)
-        self.actor_moving.textureOnOff(True)
-        self.textSource.SetText(string(color))
-        self.textActor.GetProperty.SetColor(color)
-        textTransform = vtk.vtkTransform()
-        textTransform.Identity()
-        textTransform.Translate([toolPosition.x,toolPosition.y,toolPosition.z])
-        textTransform.Scale(1,1,1)
-        self.textActor.SetUserTransform(textTransform)
-        self.textActor.Update()
+#start event
+#        self.annotatedTexture[uvPoint[0]][uvPoint[1]]=[255,255,255]
+#        self.actor_moving.setTexture(self.annotatedTexture)
+#end event        
+#        self.actor_moving.setTexture(self.image)
+
+#        self.textSource.SetText(str(color))
+#        self.textSource.Update()
+#        self.textActor.GetProperty().SetColor(color)
+        self.textActor.SetPosition(toolPosition.x,toolPosition.y,toolPosition.z)
 
 if __name__ == "__main__":
+
     # Which PyQt we use depends on our vtk version. QT4 causes segfaults with vtk > 6
     if(int(vtk.vtkVersion.GetVTKVersion()[0]) >= 6):
         from PyQt5.QtWidgets import QWidget, QVBoxLayout, QApplication
         from PyQt5 import uic
         _QT_VERSION = 5
+
     else:
         from PyQt4.QtGui import QWidget, QVBoxLayout, QApplication
         from PyQt4 import uic
         _QT_VERSION = 4
 
+
     import yaml
+
     yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
-    texturePath = "package://oct_15_demo/resources/largeProstate.png"
+#    texturePath = "package://oct_15_demo/resources/largeProstate.png"
+    texturePath = "largeProstate.png"
     with open(yamlFile, 'r') as stream:
         data = yaml.load(stream)
     cameraTransform = arrayToPyKDLFrame(data['transform'])
@@ -237,6 +240,7 @@ if __name__ == "__main__":
                          "/stereo/left/camera_info",
                          "/stereo/right/camera_info",
                          slop = slop)
+
     windowL = ForceOverlayWidget(cams.camL, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform)
     windowL.show()
     windowR = ForceOverlayWidget(cams.camR, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform,  masterWidget=windowL)

@@ -73,6 +73,7 @@ class OverlayWidget(QWidget):
     bridge = CvBridge()
     def __init__(self, camera, texturePath, meshPath, scale=1, masterWidget=None, parent=None):
         super(OverlayWidget, self).__init__()
+
         uiPath = cleanResourcePath("package://dvrk_vision/src/dvrk_vision/overlay_widget.ui")
         # Get CV image from path
         uic.loadUi(uiPath, self)
@@ -98,12 +99,15 @@ class OverlayWidget(QWidget):
         
         self.vtkWidget.Initialize()
         self.vtkWidget.start()
-        print("LOKI")
 
     def renderSetup(self):
+
         if type(self.masterWidget) != type(None):
+
+            self.image = self.masterWidget.image
             self.actor_moving = self.masterWidget.actor_moving
         else:
+
             # Set up 3D actor for organ
             meshPath = cleanResourcePath(self.meshPath)
             extension = os.path.splitext(meshPath)[1]

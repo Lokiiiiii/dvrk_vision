@@ -189,7 +189,7 @@ class UVToWorldConverter:
         tCoords = [0.0, 0.0, 0.0]
         weights = [0.0, 0.0, 0.0]
 
-        points2D = np.empty(points2D.shape)
+        points2D = np.empty(points3D.shape)
 
         for idx, point3D in enumerate(points3D):
             self.pointLocator.FindClosestPoint(point3D, closest, self._cell, cellId, subId, dist)
