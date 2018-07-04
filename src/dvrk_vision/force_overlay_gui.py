@@ -2,6 +2,7 @@ from registration_gui import cleanResourcePath
 from geometry_msgs.msg import PoseStamped
 import vtk
 import sys
+import warnings
 from dvrk_vision.vtk_stereo_viewer import StereoCameras
 import dvrk_vision.vtktools as vtktools
 import rospy
@@ -13,35 +14,17 @@ from overlay_gui import OverlayWidget
 import cv2
 from uvtoworld import UVToWorldConverter
 
-def findEndPoints(actor):
-    endPoints = actor.GetBounds()
-    startPoint = [endPoints[0], endPoints[2], endPoints[4]]
-    endPoint = [endPoints[1], endPoints[3], endPoints[5]]
-    return startPoint, endPoint
-
-class MeshLayer:
-    def __init__(self, polyData, scalingFactor = 1):
-        self.scalingFactor = scalingFactor
+class Obb:
+    def __init__(self, polyData):
         self.meshData = polyData
-        self.meshActor = vtk.vtkActor()
         self.meshTree = vtk.vtkOBBTree()
         self.ptsOfIntersection_current = []
-        self.ptsOfIntersection_history = []
         self.start = None
-        self.end = None  
-    
-    def scalingFilter(self):
-        transform = vtk.vtkTransform()
-        transform.Scale(self.scalingFactor, self.scalingFactor, self.scalingFactor)
-        PDfilter = vtk.vtkTransformPolyDataFilter()
-        PDfilter.SetInputData(self.meshData)
-        PDfilter.SetTransform(transform)
-        PDfilter.Update()
-        return PDfilter.GetOutput()
+        self.end = None
+        self.meshTree.SetDataSet(self.meshData)
+        self.buildTree() 
 
     def buildTree(self):
-        #Scale model and build OBB tree
-        self.meshTree.SetDataSet(self.scalingFilter())
         self.meshTree.BuildLocator()
     
     def FindIntersection(self, start, end, rebuild=0):
@@ -50,6 +33,10 @@ class MeshLayer:
             self.buildTree()
         pts = vtk.vtkPoints()
         success = self.meshTree.IntersectWithLine(start, end, pts, None)
+        if success==0:
+            print("WARNING: Intersection point not found !")
+        if success==-1:
+            print("WARNING: Intersection point inside the Organ !")
         pointsData = pts.GetData()
         num = pointsData.GetNumberOfTuples()
         for i in range(num):
@@ -57,8 +44,21 @@ class MeshLayer:
             self.ptsOfIntersection_current.append(temp)
         self.ptsOfIntersection_current.append(start)
         self.ptsOfIntersection_current.append(end)
-        self.ptsOfIntersection_history.append(self.ptsOfIntersection_current)   
         return self.ptsOfIntersection_current
+
+    def Visualize(self):
+        visualData = vtk.vtkPolyData()
+        self.meshTree.GenerateRepresentation(7, visualData)
+        obbmapper = vtk.vtkPolyDataMapper()
+        obbmapper.SetInputData(visualData)
+        obbactor = vtk.vtkActor()
+        obbactor.SetMapper(obbmapper)
+        meshmapper = vtk.vtkPolyDataMapper()
+        meshmapper.SetInputData(self.meshData)
+        meshactor = vtk.vtkActor()
+        meshactor.SetMapper(meshmapper)
+        meshactor.GetProperty().SetColor(vtk.vtkNamedColors().GetColor3d("flesh"))
+        return meshactor,obbactor
 
 def createMarker(radius=0.0015, color=(0,1,0)):
     src = vtk.vtkSphereSource()
@@ -81,13 +81,6 @@ def arrayToPyKDLFrame(array):
     rot = arrayToPyKDLRotation(array)
     pos = PyKDL.Vector(array[0][3],array[1][3],array[2][3])
     return PyKDL.Frame(rot,pos)
-
-def setActorMatrix(actor, npMatrix):
-    transform = vtk.vtkTransform()
-    origin = [1,1,1,0] + [1,1,0,0] + [0,0,1,0] + [0,0,0,1]
-    transform.SetMatrix(npMatrix)
-    transform.Scale(100,100,100)
-    actor.SetUserTransform(transform)
 
 def makeArrow(coneRadius = .01, shaftRadius = 0.005, tipLength = .05):
     arrowSource = vtk.vtkArrowSource()
@@ -114,8 +107,10 @@ class ForceOverlayWidget(OverlayWidget):
         super(ForceOverlayWidget, self).renderSetup()
         self.arrowActor = makeArrow(tipLength=.15)
         self.vtkWidget.ren.AddActor(self.arrowActor)
-        self.meshLayer = MeshLayer(self.actor_moving.GetMapper().GetInput(), scalingFactor=self.scale)
-        self.meshLayer.buildTree()
+        self.OrganObb = Obb(self.actor_moving.GetMapper().GetInput())
+        self.MeshActor, self.ObbActor = self.OrganObb.Visualize()
+        self.vtkWidget.ren.AddActor(self.MeshActor)
+        self.vtkWidget.ren.AddActor(self.ObbActor)
         self.uvConverter = UVToWorldConverter(self.actor_moving.GetMapper().GetInput())
         self.poseSub = rospy.Subscriber('/dvrk/PSM2/position_cartesian_current', PoseStamped, self.robotPoseCb)
         #Markers to debug Start point and end Point of tool tip extension
@@ -133,21 +128,29 @@ class ForceOverlayWidget(OverlayWidget):
         textMapper.SetInputConnection(self.textSource.GetOutputPort())
         self.textActor = vtk.vtkFollower()
         self.textActor.SetMapper(textMapper)
-        self.textActor.SetScale(1)
+        self.textActor.SetScale(.005)
+        self.textActor.RotateZ(180)
+        self.textActor.RotateY(180)
         self.vtkWidget.ren.AddActor(self.textActor)
         self.intensityMap = self.image[:,:,0] + self.image[:,:,1] + self.image[:,:,2]
         self.intensityMap = self.intensityMap.astype(np.float)/(255*3)
         self.annotatedTexture = np.copy(self.image)
 #        cv2.imshow("Intensity Map", cv2.resize(self.intensityMap, (500,500)))
 #        cv2.imshow("Annotated Texture", cv2.resize(self.annotatedTexture, (500,500)))
+        self.debugActors(1)
 
     def debugActors(self, debug):
         if debug==0:
             self.DebugActorStartPoint.VisibilityOff()
             self.DebugActorEndPoint.VisibilityOff()
+            self.ObbActor.VisibilityOff()
+            self.MeshActor.VisibilityOff()
         if debug==1:
             self.DebugActorStartPoint.VisibilityOn()
             self.DebugActorEndPoint.VisibilityOn()
+            self.ObbActor.VisibilityOff()
+            self.MeshActor.VisibilityOn()
+
         if debug==2:
             self.DebugActorStartPoint.VisibilityOff()
             self.DebugActorEndPoint.VisibilityOn()
@@ -162,24 +165,24 @@ class ForceOverlayWidget(OverlayWidget):
         normalRotation = PyKDL.Frame(PyKDL.Rotation.RotY(-np.pi/2), PyKDL.Vector(0, 0, 0))   
         pose = pose * normalRotation
         mat = posemath.toMatrix(cameraTransform.Inverse() * pose)
-        # mat[0:3,0:3] *= .1
+        self.textActor.SetPosition(mat[0:3,3])
         startPoint = mat[0:3,3]
         endPoint = startPoint + mat[0:3,0]
         self.DebugActorStartPoint.SetPosition(startPoint)
         self.DebugActorEndPoint.SetPosition(endPoint)
-
         # Transform into organ frame
         organTransform = self.actor_moving.GetMatrix()
+        print(organTransform)
         organTransform.Invert()
         if organTransform==None:
             print('Error: Organ transform not available')
             return
+        result = vtk.vtkMatrix4x4()
+        vtk.vtkMatrix4x4().Multiply4x4(self.MeshActor.GetMatrix(), organTransform, result)
+        self.MeshActor.SetUserTransform(vtk.vtkTransform().SetMatrix(result))
         endPoint = organTransform.MultiplyPoint(np.append(endPoint,1))[0:3]
         startPoint = organTransform.MultiplyPoint(np.append(startPoint,1))[0:3]
-        intersection = self.meshLayer.FindIntersection(startPoint, endPoint)
-        if len(intersection)==0:
-            print('No point of intersection found')
-            return
+        intersection = self.OrganObb.FindIntersection(startPoint, endPoint)
         # Transform back into camera frame
         organTransform.Invert()
         intersectPoint = organTransform.MultiplyPoint(np.append(intersection[0],1))[0:3]
@@ -190,7 +193,6 @@ class ForceOverlayWidget(OverlayWidget):
         arrowTransform.Identity()
         arrowTransform.SetMatrix(mat.ravel())
         self.arrowActor.SetUserTransform(arrowTransform)
-        self.debugActors(1)
 #        uvPoint = self.uvConverter.toUVSpace(intersectPoint)
 #        color = self.image[uvPoint[0]][uvPoint[1]]
 
@@ -203,7 +205,6 @@ class ForceOverlayWidget(OverlayWidget):
 #        self.textSource.SetText(str(color))
 #        self.textSource.Update()
 #        self.textActor.GetProperty().SetColor(color)
-        self.textActor.SetPosition(toolPosition.x,toolPosition.y,toolPosition.z)
 
 if __name__ == "__main__":
 
@@ -244,6 +245,6 @@ if __name__ == "__main__":
     windowL = ForceOverlayWidget(cams.camL, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform)
     windowL.show()
     windowR = ForceOverlayWidget(cams.camR, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform,  masterWidget=windowL)
-    windowR.show()
+    #windowR.show()
     rosThread.start()
     sys.exit(app.exec_())
