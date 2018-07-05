@@ -22,6 +22,7 @@ from cv_bridge import CvBridge, CvBridgeError
 from tf import transformations
 from dvrk_vision.vtk_stereo_viewer import StereoCameras, QVTKStereoViewer
 from dvrk_vision.clean_resource_path import cleanResourcePath
+from uvtoworld import makeTexturedObjData
 
 class vtkRosTextureActor(vtk.vtkActor):
     ''' Attaches texture to the actor. Texture is received by subscribing to a ROS topic and then converted to vtk image
@@ -93,6 +94,7 @@ class OverlayWidget(QWidget):
 
         self.masterWidget = masterWidget
         self.otherWindows = []
+
         if type(self.masterWidget) != type(None):
             self.masterWidget.otherWindows.append(self)
             self.otherWindows.append(self.masterWidget) 
@@ -101,9 +103,7 @@ class OverlayWidget(QWidget):
         self.vtkWidget.start()
 
     def renderSetup(self):
-
         if type(self.masterWidget) != type(None):
-
             self.image = self.masterWidget.image
             self.actor_moving = self.masterWidget.actor_moving
         else:
@@ -111,25 +111,11 @@ class OverlayWidget(QWidget):
             # Set up 3D actor for organ
             meshPath = cleanResourcePath(self.meshPath)
             extension = os.path.splitext(meshPath)[1]
-            if extension == ".stl" or extension == ".STL":
-                meshReader = vtk.vtkSTLReader()
-            elif extension == ".obj" or extension == ".OBJ":
-                meshReader = vtk.vtkOBJReader()
-            else:
-                ROS_FATAL("Mesh file has invalid extension (" + extension + ")")
-            meshReader.SetFileName(meshPath)
-            # Scale STL
-            transform = vtk.vtkTransform()
-            transform.Scale(self.scale,self.scale,self.scale)
-            transformFilter = vtk.vtkTransformFilter()
-            transformFilter.SetTransform(transform)
-            transformFilter.SetInputConnection(meshReader.GetOutputPort())
-            transformFilter.Update()
             color = (0,0,1)
             self.actor_moving = vtkRosTextureActor("stiffness_texture", color = color)
             self.actor_moving.GetProperty().BackfaceCullingOn()
             self._updateActorPolydata(self.actor_moving,
-                                      polydata=transformFilter.GetOutput(),
+                                      polydata=makeTexturedObjData(meshPath, self.scale),
                                       color = color)
             # Set texture to default
             self.image = cv2.imread(cleanResourcePath(self.texturePath))
@@ -137,7 +123,7 @@ class OverlayWidget(QWidget):
             self.actor_moving.textureOnOff(True)
 
         # Hide actor
-        self.actor_moving.VisibilityOff()
+        self.actor_moving.VisibilityOn()
         # Add actor
         self.vtkWidget.ren.AddActor(self.actor_moving)
         # Setup interactor

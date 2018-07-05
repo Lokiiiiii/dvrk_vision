@@ -15,6 +15,8 @@ from tf import transformations
 from IPython import embed
 from vtk_stereo_viewer import StereoCameras, QVTKStereoViewer
 import vtktools
+from uvtoworld import makeTexturedObjData
+
 # Which PyQt we use depends on our vtk version. QT4 causes segfaults with vtk > 6
 if(int(vtk.vtkVersion.GetVTKVersion()[0]) >= 6):
     from PyQt5.QtWidgets import QWidget, QHBoxLayout, QLabel, QApplication
@@ -92,24 +94,10 @@ class RegistrationWidget(QWidget):
         # Set up 3D actor for organ
         meshPath = cleanResourcePath(self.meshPath)
         extension = os.path.splitext(meshPath)[1]
-        if extension == ".stl" or extension == ".STL":
-            meshReader = vtk.vtkSTLReader()
-        elif extension == ".obj" or extension == ".OBJ":
-            meshReader = vtk.vtkOBJReader()
-        else:
-            ROS_FATAL("Mesh file has invalid extension (" + extension + ")")
-        meshReader.SetFileName(meshPath)
-        # Scale STL
-        transform = vtk.vtkTransform()
-        transform.Scale(self.scale,self.scale,self.scale)
-        transformFilter = vtk.vtkTransformFilter()
-        transformFilter.SetTransform(transform)
-        transformFilter.SetInputConnection(meshReader.GetOutputPort())
-        transformFilter.Update()
         self.actor_moving = vtk.vtkActor()
         self.actor_moving.GetProperty().SetOpacity(1)
         self._updateActorPolydata(self.actor_moving,
-                                  polydata=transformFilter.GetOutput(),
+                                  polydata=makeTexturedObjData(meshPath, self.scale),
                                   color=(0,1, 0))
         # Hide actor
         self.actor_moving.VisibilityOff()
@@ -138,7 +126,6 @@ class RegistrationWidget(QWidget):
         self.zRen.AddActor(self.actor_moving)
         self.zBuff = vtktools.zBuff(self.zRenWin)
         self.zRenWin.Render()
-
         # Set up publisher for rendered image
         # renWinTopic = "registration_render"
         # self.renWinFilter = vtk.vtkWindowToImageFilter()
@@ -202,6 +189,7 @@ class RegistrationWidget(QWidget):
         self.actor_moving.SetPosition(transform.GetPosition())
         self.actor_moving.SetOrientation(transform.GetOrientation())
         self.actor_moving.VisibilityOn()
+
         # if self.isVisible():
         #     self.vtkWidget.ren.ResetCameraClippingRange()
         #     # self.vtkWidget._Iren.Render()

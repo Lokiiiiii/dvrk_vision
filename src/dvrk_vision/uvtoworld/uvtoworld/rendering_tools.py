@@ -106,7 +106,8 @@ def makeObjActor(objPath, pngPath):
 		actor (vtk.vtkActor): VTK actor object with geometry and texture applied
 	"""
 	# Load geometry
-	polyData = makeTexturedObjData(objPath)
+	polyData = makeTexturedObjData(objPath, 8)
+	
 	# Mapper
 	mapper = vtk.vtkPolyDataMapper()
 	if vtk.VTK_MAJOR_VERSION <= 5:

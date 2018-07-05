@@ -12,7 +12,8 @@ from tf import transformations
 import numpy as np
 from overlay_gui import OverlayWidget
 import cv2
-from uvtoworld import UVToWorldConverter
+from uvtoworld import UVToWorldConverter, rendertools
+import os.path as path
 
 class Obb:
     def __init__(self, polyData):
@@ -71,17 +72,6 @@ def createMarker(radius=0.0015, color=(0,1,0)):
     actor.GetProperty().SetOpacity(0.55)
     return actor
 
-def arrayToPyKDLRotation(array):
-    x = PyKDL.Vector(array[0][0], array[1][0], array[2][0])
-    y = PyKDL.Vector(array[0][1], array[1][1], array[2][1])
-    z = PyKDL.Vector(array[0][2], array[1][2], array[2][2])
-    return PyKDL.Rotation(x,y,z)
-
-def arrayToPyKDLFrame(array):
-    rot = arrayToPyKDLRotation(array)
-    pos = PyKDL.Vector(array[0][3],array[1][3],array[2][3])
-    return PyKDL.Frame(rot,pos)
-
 def makeArrow(coneRadius = .01, shaftRadius = 0.005, tipLength = .05):
     arrowSource = vtk.vtkArrowSource()
     arrowSource.SetShaftRadius(shaftRadius)
@@ -97,11 +87,25 @@ def makeArrow(coneRadius = .01, shaftRadius = 0.005, tipLength = .05):
     return arrowActor
 
 class ForceOverlayWidget(OverlayWidget):
-    def __init__(self, camera, texturePath, meshPath, scale=1, cameraTransform=None, masterWidget=None, parent=None):
+    def __init__(self, camera, texturePath, meshPath, scale=1, masterWidget=None, parent=None):
         super(ForceOverlayWidget, self).__init__(camera, texturePath, meshPath, scale, masterWidget, parent)
-        if cameraTransform == None:
-            cameraTransform = PyKDL.Frame.Identity()
-        self.cameraTransform = cameraTransform
+        import yaml
+        yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
+        with open(yamlFile, 'r') as stream:
+            data = yaml.load(stream)
+        self.cameraTransform = self.arrayToPyKDLFrame(data['transform'])
+        self.activeWindow=0
+        PNG = vtk.vtkPNGReader()
+        PNG.SetFileName(cleanResourcePath(texturePath))
+        PNG.Update()
+        vtkimg = PNG.GetOutput()
+        origin = vtkimg.GetOrigin()
+        spacing = vtkimg.GetSpacing()
+        extent = vtkimg.GetExtent()
+        xc = origin[0] + 0.5*(extent[0] + extent[1]) * spacing[0]
+        yc = origin[1] + 0.5*(extent[2] + extent[3]) * spacing[1]
+        imageCenter = (xc, yc, 0)
+        self.texscale = imageCenter[0] * 2
 
     def renderSetup(self):
         super(ForceOverlayWidget, self).renderSetup()
@@ -114,9 +118,9 @@ class ForceOverlayWidget(OverlayWidget):
         self.uvConverter = UVToWorldConverter(self.actor_moving.GetMapper().GetInput())
         self.poseSub = rospy.Subscriber('/dvrk/PSM2/position_cartesian_current', PoseStamped, self.robotPoseCb)
         #Markers to debug Start point and end Point of tool tip extension
-        self.DebugActorStartPoint=createMarker(color=(0,0,1))
+        self.DebugActorStartPoint=createMarker(color=(1,0,0))
         self.vtkWidget.ren.AddActor(self.DebugActorStartPoint)
-        self.DebugActorEndPoint=createMarker(color=(0,0,1))
+        self.DebugActorEndPoint=createMarker(color=(1,0,0))
         self.vtkWidget.ren.AddActor(self.DebugActorEndPoint)
         self.SurfaceTracker=createMarker(color=(0,1,0))
         self.vtkWidget.ren.AddActor(self.SurfaceTracker)
@@ -135,8 +139,6 @@ class ForceOverlayWidget(OverlayWidget):
         self.intensityMap = self.image[:,:,0] + self.image[:,:,1] + self.image[:,:,2]
         self.intensityMap = self.intensityMap.astype(np.float)/(255*3)
         self.annotatedTexture = np.copy(self.image)
-#        cv2.imshow("Intensity Map", cv2.resize(self.intensityMap, (500,500)))
-#        cv2.imshow("Annotated Texture", cv2.resize(self.annotatedTexture, (500,500)))
         self.debugActors(1)
 
     def debugActors(self, debug):
@@ -149,7 +151,7 @@ class ForceOverlayWidget(OverlayWidget):
             self.DebugActorStartPoint.VisibilityOn()
             self.DebugActorEndPoint.VisibilityOn()
             self.ObbActor.VisibilityOff()
-            self.MeshActor.VisibilityOn()
+            self.MeshActor.VisibilityOff()
 
         if debug==2:
             self.DebugActorStartPoint.VisibilityOff()
@@ -157,54 +159,72 @@ class ForceOverlayWidget(OverlayWidget):
             self.arrowActor.VisibilityOff()
     
     def robotPoseCb(self, data):
-        toolPosition = data.pose.position
-        toolRotation = data.pose.orientation
-        mat = transformations.quaternion_matrix([toolRotation.x,toolRotation.y,toolRotation.z,toolRotation.w])
-        mat[0:3,3] = [toolPosition.x,toolPosition.y,toolPosition.z]
-        pose = posemath.fromMatrix(mat)
-        normalRotation = PyKDL.Frame(PyKDL.Rotation.RotY(-np.pi/2), PyKDL.Vector(0, 0, 0))   
-        pose = pose * normalRotation
-        mat = posemath.toMatrix(cameraTransform.Inverse() * pose)
-        self.textActor.SetPosition(mat[0:3,3])
-        startPoint = mat[0:3,3]
-        endPoint = startPoint + mat[0:3,0]
-        self.DebugActorStartPoint.SetPosition(startPoint)
-        self.DebugActorEndPoint.SetPosition(endPoint)
-        # Transform into organ frame
-        organTransform = self.actor_moving.GetMatrix()
-        print(organTransform)
-        organTransform.Invert()
-        if organTransform==None:
-            print('Error: Organ transform not available')
-            return
-        result = vtk.vtkMatrix4x4()
-        vtk.vtkMatrix4x4().Multiply4x4(self.MeshActor.GetMatrix(), organTransform, result)
-        self.MeshActor.SetUserTransform(vtk.vtkTransform().SetMatrix(result))
-        endPoint = organTransform.MultiplyPoint(np.append(endPoint,1))[0:3]
-        startPoint = organTransform.MultiplyPoint(np.append(startPoint,1))[0:3]
-        intersection = self.OrganObb.FindIntersection(startPoint, endPoint)
-        # Transform back into camera frame
-        organTransform.Invert()
-        intersectPoint = organTransform.MultiplyPoint(np.append(intersection[0],1))[0:3]
-        self.SurfaceTracker.SetPosition(intersectPoint)
-        mat[0:3,0] *= np.linalg.norm(np.subtract(mat[0:3,3], intersectPoint))
-        mat[0:3,1:3] *= 0.2
-        arrowTransform = vtk.vtkTransform()
-        arrowTransform.Identity()
-        arrowTransform.SetMatrix(mat.ravel())
-        self.arrowActor.SetUserTransform(arrowTransform)
-#        uvPoint = self.uvConverter.toUVSpace(intersectPoint)
-#        color = self.image[uvPoint[0]][uvPoint[1]]
-
-#start event
-#        self.annotatedTexture[uvPoint[0]][uvPoint[1]]=[255,255,255]
-#        self.actor_moving.setTexture(self.annotatedTexture)
+        if self.activeWindow==1:
+            toolPosition = data.pose.position
+            toolRotation = data.pose.orientation
+            mat = transformations.quaternion_matrix([toolRotation.x,toolRotation.y,toolRotation.z,toolRotation.w])
+            mat[0:3,3] = [toolPosition.x,toolPosition.y,toolPosition.z]
+            pose = posemath.fromMatrix(mat)
+            normalRotation = PyKDL.Frame(PyKDL.Rotation.RotY(-np.pi/2), PyKDL.Vector(0, 0, 0))   
+            pose = pose * normalRotation
+            mat = posemath.toMatrix(self.cameraTransform.Inverse() * pose)
+            self.textActor.SetPosition(mat[0:3,3])
+            startPoint = mat[0:3,3]
+            endPoint = startPoint + mat[0:3,0]
+            self.DebugActorStartPoint.SetPosition(startPoint)
+            self.DebugActorEndPoint.SetPosition(endPoint)
+            # Transform into organ frame
+            organTransform = self.actor_moving.GetMatrix()
+            organTransform.Invert()
+            if organTransform==vtk.vtkMatrix4x4().Identity():
+                print('Error: Organ transform not available')
+                return
+            endPoint = organTransform.MultiplyPoint(np.append(endPoint,1))[0:3]
+            startPoint = organTransform.MultiplyPoint(np.append(startPoint,1))[0:3]
+            intersection = self.OrganObb.FindIntersection(startPoint, endPoint)
+            if len(intersection)<3:
+                return
+            uvPoint = self.uvConverter.toUVSpace(intersection[0])
+            # Transform back into camera frame
+            organTransform.Invert()
+            intersectPoint = organTransform.MultiplyPoint(np.append(intersection[0],1))[0:3]
+            self.SurfaceTracker.SetPosition(intersectPoint)
+            mat[0:3,0] *= np.linalg.norm(np.subtract(mat[0:3,3], intersectPoint))
+            mat[0:3,1:3] *= 0.2
+            arrowTransform = vtk.vtkTransform()
+            arrowTransform.Identity()
+            arrowTransform.SetMatrix(mat.ravel())
+            self.arrowActor.SetUserTransform(arrowTransform)
+            uvPoint *= self.texscale
+            if uvPoint[0]<0 or uvPoint[1]<0:
+                color = vtk.vtkNamedColors().GetColor3d("turquoise")
+            else:
+                color = self.image[uvPoint[0]][uvPoint[1]]
+                color = color/float(255)
+                #start event
+                self.annotatedTexture[uvPoint[0]][uvPoint[1]]=[255,255,255]
+#            self.actor_moving.setTexture(self.annotatedTexture)
 #end event        
 #        self.actor_moving.setTexture(self.image)
+            print(color)
+            self.textActor.GetProperty().SetColor(color)
+            color =[round(c,4) for c in color]
+            self.textSource.SetText(str(color))
+            self.textSource.Update()
+            #cv2.imshow("Annotated Texture", cv2.resize(self.annotatedTexture, (500,500)))
 
-#        self.textSource.SetText(str(color))
-#        self.textSource.Update()
-#        self.textActor.GetProperty().SetColor(color)
+
+    def arrayToPyKDLRotation(self, array):
+        x = PyKDL.Vector(array[0][0], array[1][0], array[2][0])
+        y = PyKDL.Vector(array[0][1], array[1][1], array[2][1])
+        z = PyKDL.Vector(array[0][2], array[1][2], array[2][2])
+
+        return PyKDL.Rotation(x,y,z)
+
+    def arrayToPyKDLFrame(self, array):
+        rot = self.arrayToPyKDLRotation(array)
+        pos = PyKDL.Vector(array[0][3],array[1][3],array[2][3])
+        return PyKDL.Frame(rot,pos)
 
 if __name__ == "__main__":
 
@@ -222,12 +242,9 @@ if __name__ == "__main__":
 
     import yaml
 
-    yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
 #    texturePath = "package://oct_15_demo/resources/largeProstate.png"
     texturePath = "largeProstate.png"
-    with open(yamlFile, 'r') as stream:
-        data = yaml.load(stream)
-    cameraTransform = arrayToPyKDLFrame(data['transform'])
+    
     app = QApplication(sys.argv)
     rosThread = vtktools.QRosThread()
     # meshPath = rospy.get_param("~mesh_path")
@@ -242,9 +259,9 @@ if __name__ == "__main__":
                          "/stereo/right/camera_info",
                          slop = slop)
 
-    windowL = ForceOverlayWidget(cams.camL, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform)
+    windowL = ForceOverlayWidget(cams.camL, texturePath, meshPath, scale=stlScale)
     windowL.show()
-    windowR = ForceOverlayWidget(cams.camR, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform,  masterWidget=windowL)
-    #windowR.show()
+#    windowR = ForceOverlayWidget(cams.camR, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform,  masterWidget=windowL)
+#    windowR.show()
     rosThread.start()
     sys.exit(app.exec_())

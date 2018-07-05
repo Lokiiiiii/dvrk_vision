@@ -19,7 +19,8 @@ if __name__ == '__main__':
         if picker.GetActor() == objActor:
             targetPos = picker.GetPickPosition()
             uvPoint = uvConverter.toUVSpace(targetPos)
-            bgDot.SetPosition(scale * uvPoint[0], scale * uvPoint[1], 0)
+            uvPoint *= scale
+            bgDot.SetPosition(uvPoint[0], uvPoint[1], 0)
             normalPoint = targetPos
         else:
             size = renWin.GetSize()
@@ -37,12 +38,12 @@ if __name__ == '__main__':
 
 
     dirPath = path.dirname(path.abspath(__file__))
-    objPath = path.join(dirPath, 'Jesus_Unity.obj')
-    imgPath = path.join(dirPath, 'JesusDiffuse.png')
+    objPath = path.join(dirPath, '../../largeProstate.obj')
+    imgPath = path.join(dirPath, '../../largeProstate.png')
     # Create the graphics structure.    
     renWin = vtk.vtkRenderWindow()
     ren, bgRen, imageCenter = rt.makeBG(renWin, imgPath)
-    targetDot = rt.makeDotActor((0,2,0),tomato,.05)
+    targetDot = rt.makeDotActor((0,2,0),tomato,.01)
     ren.AddActor(targetDot)
     normalDot = rt.makeDotActor((0,2,0),turquoise,.02)
     ren.AddActor(normalDot)
@@ -65,7 +66,7 @@ if __name__ == '__main__':
 
     picker = vtk.vtkCellPicker()
     picker.SetTolerance(0.001)
-    picker.InitializePickList ()
+    picker.InitializePickList()
     picker.AddPickList(objActor)
     picker.PickFromListOn()
 
