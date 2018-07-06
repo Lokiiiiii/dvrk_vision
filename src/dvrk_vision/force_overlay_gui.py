@@ -106,6 +106,7 @@ class ForceOverlayWidget(OverlayWidget):
         yc = origin[1] + 0.5*(extent[2] + extent[3]) * spacing[1]
         imageCenter = (xc, yc, 0)
         self.texscale = imageCenter[0] * 2
+        self.annotatePoints=[]
 
     def renderSetup(self):
         super(ForceOverlayWidget, self).renderSetup()
@@ -202,17 +203,43 @@ class ForceOverlayWidget(OverlayWidget):
                 color = self.image[uvPoint[0]][uvPoint[1]]
                 color = color/float(255)
                 #start event
-                self.annotatedTexture[uvPoint[0]][uvPoint[1]]=[255,255,255]
-#            self.actor_moving.setTexture(self.annotatedTexture)
-#end event        
-#        self.actor_moving.setTexture(self.image)
-            print(color)
+                self.annotatePoints.append([uvPoint[0],uvPoint[1]])
+                #end event        
             self.textActor.GetProperty().SetColor(color)
             color =[round(c,4) for c in color]
             self.textSource.SetText(str(color))
             self.textSource.Update()
-            #cv2.imshow("Annotated Texture", cv2.resize(self.annotatedTexture, (500,500)))
 
+    def annotate(self, coords, spread=8, color=255):
+        for i in range(-spread,spread):
+            for j in range(-spread,spread):
+                if (i*i + j*j)>(spread*spread):
+                    continue
+                self.annotatedTexture[coords[0]+i][coords[1]+j]=[color,color,color]
+
+    def annotateSmooth(self): #should use a graph algo
+        no = len(self.annotatePoints)
+        if no<=1:
+            return
+        for i in range(no-1):
+            self.joinPoints(self.annotatePoints[i], self.annotatePoints[i+1])
+            self.annotate(self.annotatePoints[i], spread=12, color=255)
+        self.annotate(self.annotatePoints[-1], spread=12, color=255)
+        cv2.imwrite("/home/biomed/loki_vision/src/dvrk_vision/annotatedTexture.PNG", self.annotatedTexture)
+
+    def joinPoints(self, pointA, pointB):
+        position = list(pointA)
+        moved=1
+        while moved==1:
+            moved=0
+            for i in range(2):
+                if position[i]<=pointB[i]-1:
+                    position[i] += 1
+                    moved += 1
+                if position[i]>=pointB[i]+1:
+                    position[i] -= 1
+                    moved += 1
+            self.annotate(position, color=255)
 
     def arrayToPyKDLRotation(self, array):
         x = PyKDL.Vector(array[0][0], array[1][0], array[2][0])
