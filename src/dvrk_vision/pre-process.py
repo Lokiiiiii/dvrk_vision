@@ -16,6 +16,7 @@ def connect(pt1, pt2):
 	except:
 		if ( abs(pt1[0]-pt2[0])==1 and pt1[1]==pt2[1] ) or ( abs(pt1[1]-pt2[1])==1 and pt1[0]==pt2[0] ) or ( abs(pt1[0]-pt2[0])==1 and abs(pt1[1]-pt2[1])==1 ):
 			path[str((pt1,pt2))]=[pt2]
+			path[str((pt2,pt1))]=path[str((pt1,pt2))]
 #			print("Nearest Neighbor")
 			return [pt2]
 		pt3 = list(pt2)
@@ -27,6 +28,7 @@ def connect(pt1, pt2):
 					pt3[i]-=1
 #		print("Recurse")
 		path[str((pt1,pt2))] = connect(pt1, tuple(pt3)) + [pt2]
+		path[str((pt2,pt1))]=path[str((pt1,pt2))]
 #		print(path[(pt1,pt2)])
 		return path[str((pt1,pt2))]
 #	print("Found existing Path")
