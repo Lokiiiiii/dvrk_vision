@@ -14,6 +14,8 @@ from overlay_gui import OverlayWidget
 import cv2
 from uvtoworld import UVToWorldConverter, rendertools
 import os.path as path
+import json
+import time
 
 class Obb:
     def __init__(self, polyData):
@@ -106,7 +108,8 @@ class ForceOverlayWidget(OverlayWidget):
         yc = origin[1] + 0.5*(extent[2] + extent[3]) * spacing[1]
         imageCenter = (xc, yc, 0)
         self.texscale = imageCenter[0] * 2
-        self.annotatePoints=[]
+        self.prev=[-1,-1]
+
 
     def renderSetup(self):
         super(ForceOverlayWidget, self).renderSetup()
@@ -203,43 +206,31 @@ class ForceOverlayWidget(OverlayWidget):
                 color = self.image[uvPoint[0]][uvPoint[1]]
                 color = color/float(255)
                 #start event
-                self.annotatePoints.append([uvPoint[0],uvPoint[1]])
+                if self.prev != [-1,-1]:
+                    try:
+                        gradient = np.sign((self.prev[1]-int(uvPoint[1]))/(self.prev[0]-int(uvPoint[0])))
+                        print("Gradient {}".format(gradient))
+                        if gradient==0:
+                            self.annotatedTexture[min(self.prev[0], int(uvPoint[0])):max(self.prev[0], int(uvPoint[0]))][self.prev[1]] = np.ones(abs(self.prev[0]-int(uvPoint[0])))
+                        else:
+                            #Loki
+                            #if gradient<0:
+                            # = np.eye(shape)
+                            #else:
+                            # = np.rot90(np.eye(shape))
+                            #repeat ?
+                    except:
+                        print("FAILED")
+                        self.annotatedTexture[self.prev[0]][min(self.prev[1], int(uvPoint[1])):max(self.prev[1], int(uvPoint[1]))] = np.ones((abs(self.prev[1]-int(uvPoint[1])),1))
+                self.prev = [int(uvPoint[0]),int(uvPoint[1])]
                 #end event        
             self.textActor.GetProperty().SetColor(color)
             color =[round(c,4) for c in color]
             self.textSource.SetText(str(color))
             self.textSource.Update()
 
-    def annotate(self, coords, spread=8, color=255):
-        for i in range(-spread,spread):
-            for j in range(-spread,spread):
-                if (i*i + j*j)>(spread*spread):
-                    continue
-                self.annotatedTexture[coords[0]+i][coords[1]+j]=[color,color,color]
-
-    def annotateSmooth(self): #should use a graph algo
-        no = len(self.annotatePoints)
-        if no<=1:
-            return
-        for i in range(no-1):
-            self.joinPoints(self.annotatePoints[i], self.annotatePoints[i+1])
-            self.annotate(self.annotatePoints[i], spread=12, color=255)
-        self.annotate(self.annotatePoints[-1], spread=12, color=255)
+    def annotateSmooth(self): 
         cv2.imwrite("/home/biomed/loki_vision/src/dvrk_vision/annotatedTexture.PNG", self.annotatedTexture)
-
-    def joinPoints(self, pointA, pointB):
-        position = list(pointA)
-        moved=1
-        while moved==1:
-            moved=0
-            for i in range(2):
-                if position[i]<=pointB[i]-1:
-                    position[i] += 1
-                    moved += 1
-                if position[i]>=pointB[i]+1:
-                    position[i] -= 1
-                    moved += 1
-            self.annotate(position, color=255)
 
     def arrayToPyKDLRotation(self, array):
         x = PyKDL.Vector(array[0][0], array[1][0], array[2][0])
