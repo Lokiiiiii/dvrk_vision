@@ -16,6 +16,7 @@ from uvtoworld import UVToWorldConverter, rendertools
 import os.path as path
 import json
 import time
+from connect import connect
 
 class Obb:
     def __init__(self, polyData):
@@ -207,21 +208,7 @@ class ForceOverlayWidget(OverlayWidget):
                 color = color/float(255)
                 #start event
                 if self.prev != [-1,-1]:
-                    try:
-                        gradient = np.sign((self.prev[1]-int(uvPoint[1]))/(self.prev[0]-int(uvPoint[0])))
-                        print("Gradient {}".format(gradient))
-                        if gradient==0:
-                            self.annotatedTexture[min(self.prev[0], int(uvPoint[0])):max(self.prev[0], int(uvPoint[0]))][self.prev[1]] = np.ones(abs(self.prev[0]-int(uvPoint[0])))
-                        else:
-                            #Loki
-                            #if gradient<0:
-                            # = np.eye(shape)
-                            #else:
-                            # = np.rot90(np.eye(shape))
-                            #repeat ?
-                    except:
-                        print("FAILED")
-                        self.annotatedTexture[self.prev[0]][min(self.prev[1], int(uvPoint[1])):max(self.prev[1], int(uvPoint[1]))] = np.ones((abs(self.prev[1]-int(uvPoint[1])),1))
+                    connect(self.prev, (int(uvPoint[0]),int(uvPoint[1])), self.annotatedTexture)
                 self.prev = [int(uvPoint[0]),int(uvPoint[1])]
                 #end event        
             self.textActor.GetProperty().SetColor(color)
