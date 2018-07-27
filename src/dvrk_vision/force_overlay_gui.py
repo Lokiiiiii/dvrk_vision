@@ -16,7 +16,6 @@ from uvtoworld import UVToWorldConverter, rendertools
 import os.path as path
 import json
 import time
-from connect import connect
 
 class Obb:
     def __init__(self, polyData):
@@ -201,22 +200,23 @@ class ForceOverlayWidget(OverlayWidget):
             arrowTransform.SetMatrix(mat.ravel())
             self.arrowActor.SetUserTransform(arrowTransform)
             uvPoint *= self.texscale
-            if uvPoint[0]<0 or uvPoint[1]<0:
-                color = vtk.vtkNamedColors().GetColor3d("turquoise")
-            else:
+            try:
                 color = self.image[uvPoint[0]][uvPoint[1]]
                 color = color/float(255)
-                #start event
-                if self.prev != [-1,-1]:
-                    connect(self.prev, (int(uvPoint[0]),int(uvPoint[1])), self.annotatedTexture)
-                self.prev = [int(uvPoint[0]),int(uvPoint[1])]
-                #end event        
-            self.textActor.GetProperty().SetColor(color)
-            color =[round(c,4) for c in color]
-            self.textSource.SetText(str(color))
-            self.textSource.Update()
+                self.textActor.GetProperty().SetColor(color)
+                color =[round(c,4) for c in color]
+                self.textSource.SetText(str(color))
+                self.textSource.Update()
+            except:
+                pass
+            #start event
+            if self.prev != [-1,-1]:
+                cv2.line(self.annotatedTexture, tuple(self.prev), (int(uvPoint[0]),int(uvPoint[1])), (1,1,1), thickness=3)
+            self.prev = [int(uvPoint[0]),int(uvPoint[1])]
+            #end event
 
-    def annotateSmooth(self): 
+
+    def EndOfInteraction(self): 
         cv2.imwrite("/home/biomed/loki_vision/src/dvrk_vision/annotatedTexture.PNG", self.annotatedTexture)
 
     def arrayToPyKDLRotation(self, array):
