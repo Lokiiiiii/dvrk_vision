@@ -4,7 +4,7 @@ import vtk
 import sys
 import warnings
 from dvrk_vision.vtk_stereo_viewer import StereoCameras
-import dvrk_vision.vtktools as vtktools
+import vtktools as vtktools
 import rospy
 import PyKDL
 from tf_conversions import posemath
@@ -92,7 +92,7 @@ class ForceOverlayWidget(OverlayWidget):
     def __init__(self, camera, texturePath, meshPath, scale=1, masterWidget=None, parent=None):
         super(ForceOverlayWidget, self).__init__(camera, texturePath, meshPath, scale, masterWidget, parent)
         import yaml
-        yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params.yaml")
+        yamlFile = cleanResourcePath("package://dvrk_vision/defaults/registration_params_cmu.yaml")
         with open(yamlFile, 'r') as stream:
             data = yaml.load(stream)
         self.cameraTransform = self.arrayToPyKDLFrame(data['transform'])
@@ -109,7 +109,68 @@ class ForceOverlayWidget(OverlayWidget):
         imageCenter = (xc, yc, 0)
         self.texscale = imageCenter[0] * 2
         self.prev=[-1,-1]
+        self.robotPos = None
+        self.updateRate = rospy.Timer(rospy.Duration(1/15.0), self.updateImage)
 
+    def updateImage(self, event):
+        if self.robotPos is None:
+            print("NO ROBOT POSE")
+            return
+        initialRot = PyKDL.Frame(PyKDL.Rotation.RotY(-np.pi / 2), PyKDL.Vector(0, 0, 0))
+        pose = self.robotPos * initialRot
+        endPose = PyKDL.Frame(pose.M, pose.p + pose.M.UnitX())
+        # normalRotation = PyKDL.Frame(PyKDL.Rotation.RotY(-np.pi/2), PyKDL.Vector(0, 0, 0))   
+        # pose = pose * normalRotation
+        startMatrix = posemath.toMatrix(self.cameraTransform.Inverse() * pose)
+        endMatrix = posemath.toMatrix(self.cameraTransform.Inverse() * endPose)
+        self.textActor.SetPosition(startMatrix[0:3,3])
+        startPoint = startMatrix[0:3,3]
+        endPoint = endMatrix[0:3,3]
+        self.DebugActorStartPoint.SetPosition(startPoint)
+        self.DebugActorEndPoint.SetPosition(endPoint)
+        # Transform into organ frame
+        organTransform = self.actor_moving.GetMatrix()
+        organTransform.Invert()
+        if organTransform==vtk.vtkMatrix4x4().Identity():
+            print('Error: Organ transform not available')
+            return
+        endPoint = organTransform.MultiplyPoint(np.append(endPoint,1))[0:3]
+        startPoint = organTransform.MultiplyPoint(np.append(startPoint,1))[0:3]
+        intersection = self.OrganObb.FindIntersection(startPoint, endPoint)
+        if len(intersection)<3:
+            return
+        uvPoint = self.uvConverter.toUVSpace(intersection[0])
+        uvPoint[1] = 1- uvPoint[1]
+        # Transform back into camera frame
+        organTransform.Invert()
+        intersectPoint = organTransform.MultiplyPoint(np.append(intersection[0],1))[0:3]
+        self.SurfaceTracker.SetPosition(intersectPoint)
+        arrowMatrix = startMatrix
+        arrowMatrix[0:3,0] *= np.linalg.norm(np.subtract(startMatrix[0:3,3], intersectPoint))
+        arrowMatrix[0:3,1:3] *= 0.2
+        arrowTransform = vtk.vtkTransform()
+        arrowTransform.Identity()
+        arrowTransform.SetMatrix(arrowMatrix.ravel())
+        self.arrowActor.SetUserTransform(arrowTransform)
+        uvPoint *= self.texscale
+        try:
+            color = self.image[uvPoint[0]][uvPoint[1]]
+            color = color/float(255)
+            self.textActor.GetProperty().SetColor(color)
+            color =[round(c,4) for c in color]
+            self.textSource.SetText(str(color))
+            self.textSource.Update()
+        except Exception as e:
+            rospy.logwarn(e)
+            pass
+        #end event
+        # start event
+        if self.prev != [-1,-1]:
+            self.vtkWidget.ren.ResetCameraClippingRange()            
+            cv2.line(self.annotatedTexture, tuple(self.prev), (int(uvPoint[0]),int(uvPoint[1])), (1,1,1), thickness=10)
+            self.actor_moving.setTexture(self.annotatedTexture.copy())
+            # vtktools.numpyToVtkImage(self.annotatedTexture, self.vtkImage, deep=False)
+        self.prev = [int(uvPoint[0]),int(uvPoint[1])]
 
     def renderSetup(self):
         super(ForceOverlayWidget, self).renderSetup()
@@ -128,7 +189,6 @@ class ForceOverlayWidget(OverlayWidget):
         self.vtkWidget.ren.AddActor(self.DebugActorEndPoint)
         self.SurfaceTracker=createMarker(color=(0,1,0))
         self.vtkWidget.ren.AddActor(self.SurfaceTracker)
-
         self.textSource = vtk.vtkVectorText()
         self.textSource.SetText("??")
         self.textSource.Update()
@@ -144,6 +204,9 @@ class ForceOverlayWidget(OverlayWidget):
         self.intensityMap = self.intensityMap.astype(np.float)/(255*3)
         self.annotatedTexture = np.copy(self.image)
         self.debugActors(1)
+        self.vtkImage = vtktools.makeVtkImage(self.annotatedTexture.shape)
+        vtktools.numpyToVtkImage(self.annotatedTexture, self.vtkImage, deep=False) 
+
 
     def debugActors(self, debug):
         if debug==0:
@@ -156,7 +219,6 @@ class ForceOverlayWidget(OverlayWidget):
             self.DebugActorEndPoint.VisibilityOn()
             self.ObbActor.VisibilityOff()
             self.MeshActor.VisibilityOff()
-
         if debug==2:
             self.DebugActorStartPoint.VisibilityOff()
             self.DebugActorEndPoint.VisibilityOn()
@@ -168,54 +230,12 @@ class ForceOverlayWidget(OverlayWidget):
             toolRotation = data.pose.orientation
             mat = transformations.quaternion_matrix([toolRotation.x,toolRotation.y,toolRotation.z,toolRotation.w])
             mat[0:3,3] = [toolPosition.x,toolPosition.y,toolPosition.z]
-            pose = posemath.fromMatrix(mat)
-            normalRotation = PyKDL.Frame(PyKDL.Rotation.RotY(-np.pi/2), PyKDL.Vector(0, 0, 0))   
-            pose = pose * normalRotation
-            mat = posemath.toMatrix(self.cameraTransform.Inverse() * pose)
-            self.textActor.SetPosition(mat[0:3,3])
-            startPoint = mat[0:3,3]
-            endPoint = startPoint + mat[0:3,0]
-            self.DebugActorStartPoint.SetPosition(startPoint)
-            self.DebugActorEndPoint.SetPosition(endPoint)
-            # Transform into organ frame
-            organTransform = self.actor_moving.GetMatrix()
-            organTransform.Invert()
-            if organTransform==vtk.vtkMatrix4x4().Identity():
-                print('Error: Organ transform not available')
-                return
-            endPoint = organTransform.MultiplyPoint(np.append(endPoint,1))[0:3]
-            startPoint = organTransform.MultiplyPoint(np.append(startPoint,1))[0:3]
-            intersection = self.OrganObb.FindIntersection(startPoint, endPoint)
-            if len(intersection)<3:
-                return
-            uvPoint = self.uvConverter.toUVSpace(intersection[0])
-            # Transform back into camera frame
-            organTransform.Invert()
-            intersectPoint = organTransform.MultiplyPoint(np.append(intersection[0],1))[0:3]
-            self.SurfaceTracker.SetPosition(intersectPoint)
-            mat[0:3,0] *= np.linalg.norm(np.subtract(mat[0:3,3], intersectPoint))
-            mat[0:3,1:3] *= 0.2
-            arrowTransform = vtk.vtkTransform()
-            arrowTransform.Identity()
-            arrowTransform.SetMatrix(mat.ravel())
-            self.arrowActor.SetUserTransform(arrowTransform)
-            uvPoint *= self.texscale
-            try:
-                color = self.image[uvPoint[0]][uvPoint[1]]
-                color = color/float(255)
-                self.textActor.GetProperty().SetColor(color)
-                color =[round(c,4) for c in color]
-                self.textSource.SetText(str(color))
-                self.textSource.Update()
-            except:
-                pass
-            #start event
-            if self.prev != [-1,-1]:
-                cv2.line(self.annotatedTexture, tuple(self.prev), (int(uvPoint[0]),int(uvPoint[1])), (1,1,1), thickness=3)
-            self.prev = [int(uvPoint[0]),int(uvPoint[1])]
-            #end event
+            self.robotPos = posemath.fromMatrix(mat)
+            
 
-
+    def StartOfInteraction(self):
+        pass
+        
     def EndOfInteraction(self): 
         cv2.imwrite("/home/biomed/loki_vision/src/dvrk_vision/annotatedTexture.PNG", self.annotatedTexture)
 
@@ -265,6 +285,7 @@ if __name__ == "__main__":
                          slop = slop)
 
     windowL = ForceOverlayWidget(cams.camL, texturePath, meshPath, scale=stlScale)
+    windowL.activeWindow = True
     windowL.show()
 #    windowR = ForceOverlayWidget(cams.camR, texturePath, meshPath, scale=stlScale, cameraTransform=cameraTransform,  masterWidget=windowL)
 #    windowR.show()

@@ -40,7 +40,7 @@ def makeVtkImage(imgDims):
         imData.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 3)
     return imData
 
-def numpyToVtkImage(numpyData,VTKImageData):
+def numpyToVtkImage(numpyData,VTKImageData, deep=True):
     ''' Copies a numpy array to a vtkImageData object in place.
         Used for updating existing vtkImageData with new pixel
         data.
@@ -54,14 +54,14 @@ def numpyToVtkImage(numpyData,VTKImageData):
         rgb[:,:,0:3] = cv2.cvtColor(numpyData[:,:,0:3], cv2.COLOR_BGR2RGB)
         # Get a vtkDataArray object containing numpy pixel data
         VTK_data = numpy_support.numpy_to_vtk(num_array=rgb[::-1].ravel(),
-                                              deep=True, 
+                                              deep=deep, 
                                               array_type=vtk.VTK_UNSIGNED_CHAR)
         # Set number of channels in pixel data
         VTK_data.SetNumberOfComponents(numpyData.shape[2])
     else:
         #Get a vtkDataArray object containing pixel data
         VTK_data = numpy_support.numpy_to_vtk(num_array=numpyData[::-1].ravel(),
-                                              deep=True, 
+                                              deep=deep, 
                                               array_type=vtk.VTK_UNSIGNED_CHAR)
     VTKImageData.GetPointData().SetScalars(VTK_data)
 
