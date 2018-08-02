@@ -141,6 +141,7 @@ class ForceOverlayWidget(OverlayWidget):
             return
         uvPoint = self.uvConverter.toUVSpace(intersection[0])
         uvPoint[1] = 1- uvPoint[1]
+    #    uvPoint[0] = 1- uvPoint[1]
         # Transform back into camera frame
         organTransform.Invert()
         intersectPoint = organTransform.MultiplyPoint(np.append(intersection[0],1))[0:3]
@@ -163,13 +164,10 @@ class ForceOverlayWidget(OverlayWidget):
         except Exception as e:
             rospy.logwarn(e)
             pass
-        #end event
-        # start event
         if self.prev != [-1,-1]:
             self.vtkWidget.ren.ResetCameraClippingRange()            
             cv2.line(self.annotatedTexture, tuple(self.prev), (int(uvPoint[0]),int(uvPoint[1])), (1,1,1), thickness=10)
-            self.actor_moving.setTexture(self.annotatedTexture.copy())
-            # vtktools.numpyToVtkImage(self.annotatedTexture, self.vtkImage, deep=False)
+            self.actor_moving.setTexture(self.annotatedTexture[...,::-1].copy())
         self.prev = [int(uvPoint[0]),int(uvPoint[1])]
 
     def renderSetup(self):
@@ -204,8 +202,6 @@ class ForceOverlayWidget(OverlayWidget):
         self.intensityMap = self.intensityMap.astype(np.float)/(255*3)
         self.annotatedTexture = np.copy(self.image)
         self.debugActors(1)
-        self.vtkImage = vtktools.makeVtkImage(self.annotatedTexture.shape)
-        vtktools.numpyToVtkImage(self.annotatedTexture, self.vtkImage, deep=False) 
 
 
     def debugActors(self, debug):
